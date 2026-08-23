@@ -15,9 +15,9 @@
   // configurazione o di costruzione della griglia.
   const RUOLI_VISIONE_COMPLETA = ['master_admin', 'admin', 'manager'];
 
-  // Sezioni visibili a chi ha solo funzioni base (lavoratore): l'unica
-  // operazione che gli compete e' l'inserimento dei propri desiderata.
-  const SEZIONI_RUOLO_BASE = ['desiderata'];
+  // Sezioni visibili a chi ha solo funzioni base (lavoratore): i propri
+  // desiderata, piu' i calendari per sapere quando si apre e quando scade.
+  const SEZIONI_RUOLO_BASE = ['calendari', 'desiderata'];
 
   let visioneCompleta = $derived(RUOLI_VISIONE_COMPLETA.includes($user?.role));
 

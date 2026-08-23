@@ -21,9 +21,6 @@ Dopo ogni modifica completata, **chiedi conferma all'utente** prima di fare comm
 # First-time setup: create .env from .env.example, then install deps
 pip install -r requirements.txt
 
-# Download vendor JS/CSS files (run once)
-python setup_vendors.py
-
 # Build a clean demo installation from scratch (DESTRUCTIVE: wipes master.db,
 # the tenant DB and the template). Seeds a fictional hospital, fictional
 # departments and demo users. Schema comes from migrations/*.sql, which are
@@ -33,8 +30,9 @@ python seed_demo.py
 # Run development server
 python run.py
 
-# Production
-gunicorn -w 4 -b 0.0.0.0:5000 "app:create_app()"
+# Production — i WebSocket richiedono il worker gevent e un solo processo
+gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker \
+         -w 1 -b 0.0.0.0:5000 "app:create_app()"
 ```
 
 ### Frontend (SvelteKit)
@@ -51,11 +49,14 @@ npm run build
 
 The frontend build output lands in `static/` at the project root, which Flask serves. In production, only Flask needs to run.
 
-### System dependency (SQLCipher)
-```bash
-# Ubuntu/Debian required before pip install sqlcipher3
-sudo apt-get install libsqlcipher-dev
-```
+`static/` is build output and is **not versioned**: after a fresh clone `npm run build` is mandatory, otherwise Flask has no frontend to serve. The build wipes and regenerates the whole directory.
+
+### SQLCipher
+No system dependency: `requirements.txt` uses `sqlcipher3-wheels`, which ships
+SQLCipher already compiled for Windows, macOS and Linux. Only on
+Python/platform combinations without a wheel (see the table in `README.md`)
+switch to `sqlcipher3` and install `libsqlcipher-dev` / `brew install sqlcipher`
+first.
 
 ## Architecture
 
@@ -64,11 +65,12 @@ sudo apt-get install libsqlcipher-dev
 - **Prod**: `npm run build` compiles SPA to `static/`; Flask serves `static/index.html` at `/` and all API routes under `/api/`
 
 ### Backend: Flask Application Factory
-`app/__init__.py` → `create_app()` registers five blueprints and runs `init_db()` on startup:
+`app/__init__.py` → `create_app()` registers six blueprints and runs `init_db()` on startup:
 
 | Blueprint | Prefix | Roles |
 |---|---|---|
 | `routes/auth.py` | `/api/auth` | public |
+| `routes/master.py` | `/api/master` | `master_admin` |
 | `routes/admin.py` | `/api/admin` | `admin` |
 | `routes/manager.py` | `/api/manager` | `admin`, `manager` |
 | `routes/basic.py` | `/api/basic` | all roles |
@@ -116,7 +118,7 @@ The master admin logs in via `/api/master/login` and is guarded by `require_mast
 - Static adapter → outputs SPA to `../static/`
 - Auth state in Svelte stores (`frontend/src/lib/auth.js`): `user`, `token` persisted to `localStorage`
 - All API calls via `frontend/src/lib/api.js` which attaches `Authorization: Bearer <token>` header and handles 401 → redirect to `/login`
-- Routes: `/` (home), `/login`, `/basic`, `/admin`
+- Routes: `/` (home), `/login`, `/basic`, `/manager`, `/admin`, `/manuale`, `/master` (+ `/master/templates`, `/master/audit`, `/master/config`)
 
 ### Hour Calculation (`app/services/ore.py`)
 - Worked hours: from `assegnazioni_turni`
