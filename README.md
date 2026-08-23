@@ -44,8 +44,11 @@ in `requirements.txt`.
 
 Dipendenze Python (`requirements.txt`):
 `Flask` · `flask-jwt-extended` · `sqlcipher3-wheels` · `bcrypt` · `openpyxl` ·
-`weasyprint` · `python-dotenv` · `flask-socketio` · `gevent` ·
-`gevent-websocket`. Per i test: `requirements-dev.txt` aggiunge `pytest`.
+`python-dotenv` · `flask-socketio` · `gevent` · `gevent-websocket`.
+Per i test: `requirements-dev.txt` aggiunge `pytest`.
+
+`gevent` e `gevent-websocket` non compaiono in alcun `import`: li carica
+gunicorn tramite il worker indicato nel comando di produzione.
 
 ---
 
