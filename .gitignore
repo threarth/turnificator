@@ -1,0 +1,88 @@
+# ===========================================================================
+# SEGRETI — mai committare. Le chiavi cifrano i database: se finiscono in un
+# repo condiviso, il dato cifrato non e' piu' protetto.
+# I file .example sono segnaposto e VANNO versionati: le eccezioni sotto
+# servono a non farli cancellare dalle regole generiche.
+# ===========================================================================
+.env
+.env.*
+!.env.example
+tenant_keys*.json
+!tenant_keys.json.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+secrets.json
+credentials.json
+
+# ===========================================================================
+# DATABASE — contengono dati di persone (PII/PHI). Nessun .db in git, mai.
+# ===========================================================================
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/tenants/
+/templates/
+
+# ===========================================================================
+# ESPORTAZIONI E DUMP — output generati, possono contenere dati paziente
+# ===========================================================================
+*.xlsx
+*.xls
+*.csv
+*.dump
+*.bak
+*.backup
+db_backup.json
+db_py_found.txt
+
+# ===========================================================================
+# BUILD E DIPENDENZE — rigenerabili dal sorgente
+# ===========================================================================
+/static/
+node_modules/
+.svelte-kit/
+dist/
+build/
+
+# ===========================================================================
+# PYTHON
+# ===========================================================================
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===========================================================================
+# LOG
+# ===========================================================================
+*.log
+solver_diag.log
+
+# ===========================================================================
+# EDITOR E SISTEMA OPERATIVO
+# ===========================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===========================================================================
+# CLAUDE CODE — impostazioni locali della macchina
+# ===========================================================================
+.claude/settings.local.json

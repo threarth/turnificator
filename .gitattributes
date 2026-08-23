@@ -1,0 +1,15 @@
+# Fine riga normalizzati: nel repository sempre LF, indipendentemente dal
+# sistema di chi committa. Evita diff spuri fra Windows, macOS e Linux.
+* text=auto eol=lf
+
+# File binari: nessuna conversione
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.xlsx binary
+*.db   binary
+*.woff  binary
+*.woff2 binary

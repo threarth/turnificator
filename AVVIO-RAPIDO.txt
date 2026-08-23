@@ -1,0 +1,129 @@
+TURNIFICATOR 9000 — avvio rapido
+=================================
+
+Questo pacchetto NON contiene database ne' chiavi di cifratura: li generi tu
+al primo avvio. Nessun dato di persone reali e' incluso — l'installazione
+demo crea un ospedale di fantasia.
+
+PREREQUISITI
+------------
+  Python 3.12  (consigliato; 3.11+ supportato)
+  Node 18+     OBBLIGATORIO
+
+Node serve davvero: la cartella static/ non e' versionata, viene generata
+dalla build del frontend. Senza quel passo l'app parte ma mostra una pagina
+vuota.
+
+Non serve installare SQLCipher: il pacchetto sqlcipher3-wheels lo contiene
+gia' compilato per Windows, macOS e Linux.
+
+Se usi Python 3.13 o 3.14 su Mac Intel, o 3.14 su Linux, il wheel non esiste:
+vedi la tabella nel README.
+
+ATTENZIONE ALL'ORDINE: la build del frontend cancella e rigenera static/,
+
+PASSI — macOS
+-------------
+1) Configurazione: copia i due file di esempio e sostituisci OGNI chiave con
+   un valore casuale lungo (cifrano il database: se le perdi, perdi i dati,
+   non c'e' recupero).
+
+     cp .env.example .env
+     cp tenant_keys.json.example tenant_keys.json
+
+   Per generare una chiave:
+     python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+
+   Da sostituire: SECRET_KEY, MASTER_DB_KEY, JWT_SECRET_KEY in .env,
+   piu' 'default' e '_template_base' in tenant_keys.json.
+
+2) Dipendenze Python
+
+     python3 -m venv venv
+     source venv/bin/activate
+     pip install -r requirements-dev.txt
+
+3) Frontend (obbligatorio: genera static/)
+
+     cd frontend && npm install && npm run build && cd ..
+
+
+4) Installazione demo — crea i database e li popola
+
+     python seed_demo.py
+
+5) Avvio
+
+     python run.py
+
+   Poi apri http://localhost:5000
+
+
+PASSI — Windows (PowerShell)
+----------------------------
+1) Configurazione
+
+     Copy-Item .env.example .env
+     Copy-Item tenant_keys.json.example tenant_keys.json
+
+   Per generare una chiave:
+     python -c "import secrets; print(secrets.token_urlsafe(48))"
+
+2) Dipendenze Python
+
+     py -m venv venv
+     .\venv\Scripts\Activate.ps1
+     pip install -r requirements-dev.txt
+
+   Se l'attivazione viene bloccata dalla policy di esecuzione:
+     Set-ExecutionPolicy -Scope Process RemoteSigned
+
+3) Frontend (obbligatorio: genera static/)
+
+     cd frontend; npm install; npm run build; cd ..
+
+
+4) Installazione demo — crea i database e li popola
+
+     python seed_demo.py
+
+5) Avvio
+
+     python run.py
+
+   Poi apri http://localhost:5000
+
+
+ACCESSI DELLA DEMO
+------------------
+  Piattaforma    superadmin / superadmin     (pagina /master)
+  Unita' operat. admin_uo   / admin_uo       (organizzazione: default)
+  Manager        rossi      / rossi
+  Lavoratore     conti      / conti
+
+  ATTENZIONE: la password coincide con il nome utente. Vanno cambiate prima
+  di qualsiasi uso reale. L'applicazione lo segnala con un avviso in cima
+  alla pagina finche' non lo fai.
+
+
+SVILUPPO
+--------
+Per lavorare sull'interfaccia conviene il dev server di Vite, che ricarica a
+caldo e fa da proxy verso Flask:
+
+  terminale 1:  python run.py                 (backend, porta 5000)
+  terminale 2:  cd frontend && npm run dev    (frontend, porta 5173)
+
+In quel caso si usa http://localhost:5173. La build in static/ serve solo
+per far girare tutto dal solo Flask.
+
+
+VERIFICA
+--------
+  pytest            (21 test)
+
+
+DOCUMENTAZIONE
+--------------
+  README.md         struttura del software, configurazione, architettura
+  CLAUDE.md         istruzioni per lavorare sul codice con Claude Code

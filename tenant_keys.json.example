@@ -1,0 +1,5 @@
+{
+  "_commento": "Copiare in tenant_keys.json e sostituire OGNI chiave con un valore casuale robusto. Una chiave per tenant, piu' una per ogni template (prefisso underscore). Perdere questo file significa perdere l'accesso ai dati: non committarlo mai.",
+  "default": "CAMBIA-QUESTA-CHIAVE-TENANT-DEFAULT",
+  "_template_base": "CAMBIA-QUESTA-CHIAVE-TEMPLATE-BASE"
+}

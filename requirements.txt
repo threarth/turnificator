@@ -1,0 +1,17 @@
+Flask>=3.0.0
+flask-jwt-extended>=4.6.0
+
+# SQLCipher con la libreria nativa gia' compilata nel wheel (Windows, macOS,
+# Linux): evita di dover installare libsqlcipher a livello di sistema.
+# Espone il modulo con il nome 'sqlcipher3', quindi il codice non cambia.
+# Su piattaforme senza wheel disponibile, sostituire con 'sqlcipher3' e
+# installare prima la libreria di sistema (vedi README).
+sqlcipher3-wheels>=0.5.7
+
+bcrypt>=4.1.2
+openpyxl>=3.1.2
+weasyprint>=61.2
+python-dotenv>=1.0.0
+flask-socketio>=5.3.0
+gevent>=23.0.0
+gevent-websocket>=0.10.1
