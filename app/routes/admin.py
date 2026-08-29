@@ -69,11 +69,14 @@ Endpoint:
 import json
 from datetime import datetime
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 
 from app.auth import require_role, get_current_user, hash_password
 from app.db import query_one, query_all, execute_write, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
+from app.services.fasce_orarie import (
+    PAUSA_DEFAULT_MINUTI, FormatoOrarioNonValido, parse_orario, ricalcola_tutte
+)
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
@@ -82,36 +85,114 @@ bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 # FLAG TURNO (globali, con gerarchia parent e parametri ore/peso)
 # =============================================================================
 
+# Colonne della fascia oraria restituite al client. Durata, ore e peso sono
+# derivati: compaiono in lettura ma li riscrive ricalcola_tutte().
+COLONNE_FLAG = (
+    "f.id, f.nome, f.parent_id, f.descrizione, "
+    "f.orario_inizio, f.orario_fine, f.pausa_minuti, "
+    "f.durata_netta_minuti, f.durata_totale_minuti, "
+    "f.peso_turno, f.ore_turno, f.ore_primo_giorno, f.ore_ultimo_giorno, "
+    "f.mostra_in_struttura, f.tipo"
+)
+
+# Valori ammessi dalla colonna flag_turno.tipo.
+TIPI_FLAG = ('lavorativo', 'assenza')
+TIPO_FLAG_DEFAULT = 'lavorativo'
+
+
+def _normalizza_orario(valore):
+    """
+    Porta un orario in ingresso alla forma canonica 'HH:MM', oppure a None.
+
+    La stringa vuota e' un modo legittimo per cancellare l'orario di una
+    fascia: la si distingue da un orario malformato, che invece e' un errore.
+
+    Args:
+        valore (str|None): orario come arriva dal client.
+
+    Returns:
+        str|None: orario canonico, o None se il campo va svuotato.
+
+    Raises:
+        FormatoOrarioNonValido: la stringa non e' un orario valido.
+    """
+    if valore is None:
+        return None
+
+    testo = str(valore).strip()
+    if not testo:
+        return None
+
+    minuti = parse_orario(testo)
+    ore, resto = divmod(minuti, 60)
+
+    return f'{ore:02d}:{resto:02d}'
+
+
+def _leggi_campi_orario(dati, correnti=None):
+    """
+    Estrae orari e pausa dal payload, con i valori correnti come default.
+
+    Args:
+        dati (dict): payload della richiesta.
+        correnti (dict|None): riga flag_turno esistente, sulla PUT.
+
+    Returns:
+        tuple: (dict con orario_inizio/orario_fine/pausa_minuti, errore|None).
+    """
+    correnti = correnti or {}
+
+    try:
+        campi = {
+            'orario_inizio': _normalizza_orario(
+                dati.get('orario_inizio', correnti.get('orario_inizio'))
+            ),
+            'orario_fine': _normalizza_orario(
+                dati.get('orario_fine', correnti.get('orario_fine'))
+            ),
+        }
+    except FormatoOrarioNonValido as e:
+        return {}, f'Orario non valido: {e}'
+
+    # Su una fascia nuova la pausa non dichiarata e' quella di contratto,
+    # non zero: una fascia senza pausa e' una scelta da esprimere.
+    pausa = dati.get('pausa_minuti', correnti.get('pausa_minuti'))
+    if pausa is None or pausa == '':
+        pausa = PAUSA_DEFAULT_MINUTI
+    try:
+        campi['pausa_minuti'] = max(0, int(pausa))
+    except (TypeError, ValueError):
+        return {}, 'Pausa non valida: attesi minuti interi.'
+
+    if bool(campi['orario_inizio']) != bool(campi['orario_fine']):
+        return {}, 'Servono entrambi gli orari, oppure nessuno dei due.'
+
+    return campi, None
+
+
+def _normalizza_tipo(valore, default=TIPO_FLAG_DEFAULT):
+    """Riporta il tipo flag a un valore ammesso, senza fallire."""
+    return valore if valore in TIPI_FLAG else default
+
+
 @bp.route('/flag-turno', methods=['GET'])
 @require_role('admin', 'manager')
 def lista_flag_turno():
-    """Restituisce tutti i flag globali con info parent e parametri ore/peso."""
+    """Restituisce tutti i flag globali con parent, orari e parametri derivati."""
     flag = query_all(
-        "SELECT f.id, f.nome, f.parent_id, f.descrizione, "
-        "f.peso_turno, f.ore_turno, f.ore_primo_giorno, f.ore_ultimo_giorno, "
-        "f.mostra_in_struttura, f.entita, f.tipo, p.nome AS parent_nome "
+        f"SELECT {COLONNE_FLAG}, p.nome AS parent_nome "
         "FROM flag_turno f "
         "LEFT JOIN flag_turno p ON f.parent_id = p.id "
         "ORDER BY f.parent_id NULLS FIRST, f.id",
         ()
     )
-    # Aggiungi componenti per flag composti
-    for f in flag:
-        if f['entita'] == 'composto':
-            comps = query_all(
-                "SELECT componente_flag_id FROM flag_composizione WHERE flag_id=?",
-                (f['id'],)
-            )
-            f['componenti'] = [c['componente_flag_id'] for c in comps]
-        else:
-            f['componenti'] = []
     return jsonify({'ok': True, 'flags': flag}), 200
 
 
 @bp.route('/flag-turno', methods=['POST'])
 @require_role('admin')
 def crea_flag_turno():
-    """Crea un nuovo flag semantico globale con parametri ore/peso opzionali."""
+    """Crea un flag globale. Durata, ore e peso restano derivati dagli orari."""
     dati = request.get_json(silent=True) or {}
     nome = (dati.get('nome') or '').strip().lower()
     parent_id = dati.get('parent_id')
@@ -128,59 +209,44 @@ def crea_flag_turno():
         parent = query_one("SELECT id FROM flag_turno WHERE id=?", (parent_id,))
         if not parent:
             return jsonify({'ok': False, 'errore': 'Flag parent non trovato.'}), 404
-    entita = dati.get('entita', 'semplice')
-    if entita not in ('semplice', 'composto'):
-        entita = 'semplice'
-    tipo = dati.get('tipo', 'lavorativo')
-    if tipo not in ('lavorativo', 'assenza'):
-        tipo = 'lavorativo'
 
-    peso = dati.get('peso_turno')
-    ore_t = dati.get('ore_turno')
-    ore_p = dati.get('ore_primo_giorno')
-    ore_u = dati.get('ore_ultimo_giorno')
+    orari, errore = _leggi_campi_orario(dati)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
 
     cur = execute_write(
-        "INSERT INTO flag_turno (nome, parent_id, descrizione, peso_turno, ore_turno, "
-        "ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura, entita, tipo) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (nome, parent_id, descrizione or None, peso, ore_t, ore_p, ore_u,
-         int(bool(dati.get('mostra_in_struttura', True))), entita, tipo)
+        "INSERT INTO flag_turno (nome, parent_id, descrizione, "
+        "orario_inizio, orario_fine, pausa_minuti, "
+        "peso_turno, ore_turno, ore_primo_giorno, ore_ultimo_giorno, "
+        "mostra_in_struttura, tipo) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (nome, parent_id, descrizione or None,
+         orari['orario_inizio'], orari['orario_fine'], orari['pausa_minuti'],
+         dati.get('peso_turno'), dati.get('ore_turno'),
+         dati.get('ore_primo_giorno'), dati.get('ore_ultimo_giorno'),
+         int(bool(dati.get('mostra_in_struttura', True))),
+         _normalizza_tipo(dati.get('tipo')))
     )
-    new_id = cur.lastrowid
 
-    # Salva componenti se composto
-    componenti = dati.get('componenti', [])
-    if tipo == 'composto' and componenti:
-        for comp_id in componenti:
-            execute_write(
-                "INSERT OR IGNORE INTO flag_composizione (flag_id, componente_flag_id) VALUES (?,?)",
-                (new_id, comp_id)
-            )
+    ricalcola_tutte(get_db())
 
-    return jsonify({'ok': True, 'id': new_id}), 201
+    return jsonify({'ok': True, 'id': cur.lastrowid}), 201
 
 
 @bp.route('/flag-turno/<int:fid>', methods=['PUT'])
 @require_role('admin')
 def modifica_flag_turno(fid):
-    """Modifica un flag globale (descrizione, parent, ore/peso)."""
+    """Modifica un flag globale (nome, parent, orari, pausa, ore manuali)."""
     f = query_one("SELECT * FROM flag_turno WHERE id=?", (fid,))
     if not f:
         return jsonify({'ok': False, 'errore': 'Flag non trovato.'}), 404
+
     dati = request.get_json(silent=True) or {}
     mostra = dati.get('mostra_in_struttura')
     if mostra is not None:
         mostra = int(bool(mostra))
     else:
         mostra = f.get('mostra_in_struttura', 1)
-    new_parent_id = dati.get('parent_id', f['parent_id'])
-    entita = dati.get('entita', f.get('entita', 'semplice'))
-    if entita not in ('semplice', 'composto'):
-        entita = 'semplice'
-    tipo = dati.get('tipo', f.get('tipo', 'lavorativo'))
-    if tipo not in ('lavorativo', 'assenza'):
-        tipo = 'lavorativo'
 
     nuovo_nome = (dati.get('nome') or '').strip().lower() or f['nome']
     if nuovo_nome != f['nome']:
@@ -188,61 +254,77 @@ def modifica_flag_turno(fid):
         if dup:
             return jsonify({'ok': False, 'errore': f'Nome "{nuovo_nome}" già in uso.'}), 409
 
+    orari, errore = _leggi_campi_orario(dati, f)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
     execute_write(
         "UPDATE flag_turno SET nome=?, descrizione=?, parent_id=?, "
+        "orario_inizio=?, orario_fine=?, pausa_minuti=?, "
         "peso_turno=?, ore_turno=?, ore_primo_giorno=?, ore_ultimo_giorno=?, "
-        "mostra_in_struttura=?, entita=?, tipo=? WHERE id=?",
+        "mostra_in_struttura=?, tipo=? WHERE id=?",
         (
             nuovo_nome,
             dati.get('descrizione', f['descrizione']),
-            new_parent_id,
+            dati.get('parent_id', f['parent_id']),
+            orari['orario_inizio'], orari['orario_fine'], orari['pausa_minuti'],
             dati.get('peso_turno', f.get('peso_turno')),
             dati.get('ore_turno', f.get('ore_turno')),
             dati.get('ore_primo_giorno', f.get('ore_primo_giorno')),
             dati.get('ore_ultimo_giorno', f.get('ore_ultimo_giorno')),
-            mostra, entita, tipo, fid
+            mostra, _normalizza_tipo(dati.get('tipo'), f.get('tipo', TIPO_FLAG_DEFAULT)),
+            fid
         )
     )
 
-    # Propaga rinomina flag a tutte le dipendenze testuali
     if nuovo_nome != f['nome']:
-        # Snapshot calendario_turni
-        execute_write(
-            "UPDATE calendario_turni SET flag_nome=? WHERE flag_id=?",
-            (nuovo_nome, fid)
-        )
-        # Conteggi context (JSON in config) — aggiorna flag_nome
-        cfg = query_one("SELECT valore FROM config WHERE chiave='conteggi_context'")
-        if cfg and cfg['valore']:
-            try:
-                conteggi = json.loads(cfg['valore'])
-                changed = False
-                for c in conteggi:
-                    if c.get('flag_nome') == f['nome']:
-                        c['flag_nome'] = nuovo_nome
-                        changed = True
-                if changed:
-                    execute_write(
-                        "UPDATE config SET valore=? WHERE chiave='conteggi_context'",
-                        (json.dumps(conteggi),)
-                    )
-            except (json.JSONDecodeError, TypeError):
-                pass
-    # Aggiorna componenti se composto
-    componenti = dati.get('componenti')
-    if componenti is not None:
-        execute_write("DELETE FROM flag_composizione WHERE flag_id=?", (fid,))
-        if entita == 'composto':
-            for comp_id in componenti:
-                execute_write(
-                    "INSERT OR IGNORE INTO flag_composizione (flag_id, componente_flag_id) VALUES (?,?)",
-                    (fid, comp_id)
-                )
-    elif entita != 'composto':
-        # Se cambiato da composto a semplice, pulisci componenti
-        execute_write("DELETE FROM flag_composizione WHERE flag_id=?", (fid,))
+        _propaga_rinomina_flag(fid, f['nome'], nuovo_nome)
+
+    # Gli orari possono essere cambiati: i campi derivati vanno riallineati
+    # subito, o resterebbero stantii fino al riavvio successivo.
+    ricalcola_tutte(get_db())
 
     return jsonify({'ok': True, 'messaggio': 'Flag aggiornato.'}), 200
+
+
+def _propaga_rinomina_flag(fid, vecchio_nome, nuovo_nome):
+    """
+    Riporta la rinomina di un flag su tutte le dipendenze testuali.
+
+    Il nome del flag e' duplicato negli snapshot dei calendari e nella
+    configurazione dei conteggi, che lo memorizzano come stringa: senza
+    questa propagazione una rinomina spezzerebbe entrambi.
+
+    Args:
+        fid (int): id del flag rinominato.
+        vecchio_nome (str): nome precedente.
+        nuovo_nome (str): nome nuovo.
+    """
+    execute_write(
+        "UPDATE calendario_turni SET flag_nome=? WHERE flag_id=?",
+        (nuovo_nome, fid)
+    )
+
+    cfg = query_one("SELECT valore FROM config WHERE chiave='conteggi_context'")
+    if not (cfg and cfg['valore']):
+        return
+
+    try:
+        conteggi = json.loads(cfg['valore'])
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    modificati = False
+    for c in conteggi:
+        if c.get('flag_nome') == vecchio_nome:
+            c['flag_nome'] = nuovo_nome
+            modificati = True
+
+    if modificati:
+        execute_write(
+            "UPDATE config SET valore=? WHERE chiave='conteggi_context'",
+            (json.dumps(conteggi),)
+        )
 
 
 @bp.route('/flag-turno/<int:fid>', methods=['DELETE'])
@@ -308,41 +390,30 @@ def elimina_flag_turno(fid):
 @require_role('admin')
 def ripristina_flag_default():
     """Reinserisce i flag default senza toccare quelli già esistenti."""
-    from app import _inserisci_flag_default
-    from app.db import get_db
+    from app import CONCETTI_ROOT, _inserisci_flag_default
+
     db = get_db()
     _inserisci_flag_default(db)
 
-    # Imposta mostra_in_struttura=0 per flag assenza e diurno
+    # I concetti root e le assenze non si agganciano ai gruppi: l'INSERT OR
+    # IGNORE non tocca le righe gia' presenti, quindi vanno nascoste qui.
+    nomi_root = [nome for nome, _, _, _ in CONCETTI_ROOT]
+    segnaposto = ','.join('?' * len(nomi_root))
     try:
+        db.execute("UPDATE flag_turno SET mostra_in_struttura = 0 WHERE tipo = 'assenza'")
         db.execute(
-            "UPDATE flag_turno SET mostra_in_struttura = 0 "
-            "WHERE tipo = 'assenza'"
+            f"UPDATE flag_turno SET mostra_in_struttura = 0 WHERE nome IN ({segnaposto})",
+            nomi_root
         )
-        db.execute(
-            "UPDATE flag_turno SET mostra_in_struttura = 0 "
-            "WHERE nome = 'diurno'"
-        )
-        # lunga è composto (copre mattina + pomeriggio), tutti gli altri semplice
-        db.execute(
-            "UPDATE flag_turno SET entita = 'composto' WHERE nome = 'lunga'"
-        )
-        # Composizione: lunga = mattina + pomeriggio
-        lunga_id = db.execute("SELECT id FROM flag_turno WHERE nome='lunga'").fetchone()
-        matt_id = db.execute("SELECT id FROM flag_turno WHERE nome='mattina'").fetchone()
-        pom_id = db.execute("SELECT id FROM flag_turno WHERE nome='pomeriggio'").fetchone()
-        if lunga_id and matt_id and pom_id:
-            db.execute(
-                "INSERT OR IGNORE INTO flag_composizione (flag_id, componente_flag_id) VALUES (?,?)",
-                (lunga_id[0], matt_id[0])
-            )
-            db.execute(
-                "INSERT OR IGNORE INTO flag_composizione (flag_id, componente_flag_id) VALUES (?,?)",
-                (lunga_id[0], pom_id[0])
-            )
         db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        db.rollback()
+        current_app.logger.warning('Ripristino visibilità flag default fallito: %s', e)
+        return jsonify({
+            'ok': False, 'errore': 'Ripristino dei flag default non riuscito.'
+        }), 500
+
+    ricalcola_tutte(db)
 
     return jsonify({'ok': True, 'messaggio': 'Flag default ripristinati.'}), 200
 
@@ -1102,6 +1173,38 @@ def get_struttura_preset(pid):
     return jsonify({'ok': True, 'struttura': struttura}), 200
 
 
+def _prima_fascia_duplicata(struttura_in):
+    """
+    Cerca una fascia oraria usata due volte nella stessa struttura.
+
+    Il gruppo E' l'insieme dei turni di una fascia dentro un sovragruppo:
+    due gruppi sulla stessa fascia non hanno significato, e l'indice unico
+    idx_gruppi_sovragruppo_fascia li rifiuterebbe comunque a meta'
+    salvataggio, con un errore di database al posto di un messaggio.
+
+    Args:
+        struttura_in (list): struttura in arrivo dal client.
+
+    Returns:
+        tuple|None: (nome struttura, nome fascia) del primo duplicato.
+    """
+    for sovragruppo in struttura_in:
+        viste = set()
+        for gruppo in sovragruppo.get('gruppi', []):
+            flag_id = gruppo.get('flag_id')
+            if flag_id is None:
+                continue
+
+            if flag_id in viste:
+                fascia = query_one("SELECT nome FROM flag_turno WHERE id=?", (flag_id,))
+                nome_struttura = sovragruppo.get('nome') or sovragruppo.get('sigla') or '?'
+                return nome_struttura, (fascia['nome'] if fascia else str(flag_id))
+
+            viste.add(flag_id)
+
+    return None
+
+
 @bp.route('/struttura-presets/<int:pid>/struttura', methods=['PUT'])
 @require_role('admin')
 def salva_struttura_preset(pid):
@@ -1111,6 +1214,16 @@ def salva_struttura_preset(pid):
 
     dati = request.get_json(silent=True) or {}
     struttura_in = dati.get('struttura', [])
+
+    duplicato = _prima_fascia_duplicata(struttura_in)
+    if duplicato:
+        nome_struttura, nome_fascia = duplicato
+        return jsonify({
+            'ok': False,
+            'errore': f'La fascia "{nome_fascia}" è già presente in '
+                      f'"{nome_struttura}": una fascia oraria può comparire '
+                      f'una volta sola per struttura.'
+        }), 409
 
     # Raccogli IDs esistenti nel DB per questo preset (per rilevare eliminazioni)
     sg_db_ids = {r['id'] for r in query_all(

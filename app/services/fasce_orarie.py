@@ -21,6 +21,10 @@ Campi derivati (ricalcolati a ogni scrittura, mai digitati dall'utente):
     peso_turno           = durata netta / durata netta del turno tipo
 """
 
+import logging
+
+log = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Costanti
 # ---------------------------------------------------------------------------
@@ -262,6 +266,64 @@ def ricalcola_parametri(fascia, durata_netta_turno_tipo):
         'ore_turno': calcola_ore_turno(totale),
         'peso_turno': calcola_peso(netta, durata_netta_turno_tipo),
     }
+
+
+def ricalcola_tutte(db):
+    """
+    Ricalcola durate, ore e peso di ogni fascia a partire da orari e pausa.
+
+    Idempotente e auto-riparante: i campi derivati non si scrivono mai a
+    mano, quindi ricalcolarli riallinea eventuali divergenze. Va invocata
+    all'avvio e dopo ogni scrittura su un flag, perche' un peso stantio
+    resterebbe a video fino al riavvio successivo.
+
+    Lascia intatti i flag privi sia di orari sia di durata netta — i concetti
+    root diversi da turno_tipo e i flag assenza — perche' li' un ricalcolo
+    azzererebbe le ore inserite a mano prima delle fasce orarie.
+
+    Args:
+        db: connessione al database del tenant.
+    """
+    try:
+        flag = [dict(r) for r in db.execute(
+            "SELECT id, nome, orario_inizio, orario_fine, pausa_minuti, "
+            "durata_netta_minuti FROM flag_turno"
+        ).fetchall()]
+    except Exception as e:
+        log.warning('Lettura flag per il ricalcolo fasce fallita: %s', e)
+        return
+
+    netta_turno_tipo = next(
+        (f['durata_netta_minuti'] for f in flag if f['nome'] == NOME_TURNO_TIPO),
+        None
+    ) or DURATA_TURNO_TIPO_DEFAULT_MINUTI
+
+    try:
+        for fascia in flag:
+            try:
+                derivati = ricalcola_parametri(fascia, netta_turno_tipo)
+            except FormatoOrarioNonValido as e:
+                log.warning(
+                    "Fascia '%s': orari non validi, parametri non ricalcolati "
+                    "(%s)", fascia['nome'], e
+                )
+                continue
+
+            if derivati is None:
+                continue
+
+            db.execute(
+                "UPDATE flag_turno SET durata_netta_minuti = ?, "
+                "durata_totale_minuti = ?, ore_turno = ?, peso_turno = ? "
+                "WHERE id = ?",
+                (derivati['durata_netta_minuti'], derivati['durata_totale_minuti'],
+                 derivati['ore_turno'], derivati['peso_turno'], fascia['id'])
+            )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log.warning('Ricalcolo parametri fasce fallito: %s', e)
 
 
 # ---------------------------------------------------------------------------

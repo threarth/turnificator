@@ -9,6 +9,8 @@
     editRowKeydown, startEditFromRow as _startEditFromRow
   } from '$lib/admin/actions.js';
   import DeleteButton from '$lib/admin/DeleteButton.svelte';
+  import FlagRow from '$lib/admin/FlagRow.svelte';
+  import { decToHm, hmToDec } from '$lib/admin/durate.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
   import EditableTable from '$lib/admin/EditableTable.svelte';
   import StyleContextMenu from '$lib/StyleContextMenu.svelte';
@@ -118,7 +120,7 @@
   let flagTurno       = [];
   let showAddFlag     = false;
   let editingFlag     = null;
-  let nuovoFlag       = { nome: '', descrizione: '', parent_id: null, entita: 'semplice', tipo: 'lavorativo', componenti: [], peso_turno: null, _ore_turno: '', _ore_primo: '', _ore_ultimo: '' };
+  let nuovoFlag       = flagVuoto();
   let collapsedFlags  = new Set();
 
   // ── Tipi richiesta (desiderata, globali) ─────────────────────
@@ -197,26 +199,16 @@
   const NOMI_MESI = ['','Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
                      'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
 
-  // Helper: formatta nome flag con parent e composizione (HTML)
-  // - figlio semplice: "parent→figlio"
-  // - figlio composto: "parent→figlio<br>(a+b)"
-  // - root composto:   "flag<br>(a+b)"
-  // - root semplice:   "flag"
+  // Helper: formatta il nome di un flag con il concetto che lo contiene.
+  // - fascia oraria: "concetto→fascia"
+  // - concetto root: "concetto"
   function flagLabel(nameOrId, _flags = flagTurno) {
     if (!nameOrId && nameOrId !== 0) return '—';
     const f = typeof nameOrId === 'number'
       ? _flags.find(x => x.id === nameOrId)
       : _flags.find(x => x.nome === nameOrId);
     if (!f) return String(nameOrId);
-    let label = f.parent_nome ? `${f.parent_nome}→${f.nome}` : f.nome;
-    if (f.entita === 'composto' && f.componenti?.length) {
-      const nomi = f.componenti.map(cid => {
-        const c = _flags.find(x => x.id === cid);
-        return c ? c.nome : '?';
-      });
-      label += `<br>(${nomi.join('+')})`;
-    }
-    return label;
+    return f.parent_nome ? `${f.parent_nome}→${f.nome}` : f.nome;
   }
 
   function regolaStyle(r) {
@@ -659,23 +651,6 @@
     pulisciaOrfaniLoading = false;
   }
 
-  // Conversione ore decimali ↔ hh:mm
-  function decToHm(dec) {
-    if (dec == null || dec === '') return '';
-    const d = parseFloat(dec);
-    if (isNaN(d)) return '';
-    const h = Math.floor(d);
-    const m = Math.round((d - h) * 60);
-    return `${h}:${String(m).padStart(2, '0')}`;
-  }
-  function hmToDec(hm) {
-    if (!hm || !hm.trim()) return null;
-    const parts = hm.trim().split(':');
-    const h = parseInt(parts[0]) || 0;
-    const m = parseInt(parts[1]) || 0;
-    return Math.round((h + m / 60) * 100) / 100;
-  }
-
   // ── Tipi qualitativo ───────────────────────────────────────────
   async function creaTipoQual() {
     const r = await adminApi.creaTipoQualitativo({ ...nuovoTipoQual });
@@ -764,50 +739,83 @@
   }
 
   // ── Flag turno ───────────────────────────────────────────────
+  // Pausa obbligatoria di default, in minuti: si somma alla durata netta.
+  const PAUSA_DEFAULT_MINUTI = 10;
+
+  // Stato iniziale del form "nuovo flag". I campi con underscore sono le
+  // durate in h:mm digitate dall'utente, convertite in decimali al salvataggio.
+  function flagVuoto(parentId = null) {
+    return {
+      nome: '', descrizione: '', parent_id: parentId, tipo: 'lavorativo',
+      orario_inizio: '', orario_fine: '', pausa_minuti: PAUSA_DEFAULT_MINUTI,
+      peso_turno: null, _ore_turno: '', _ore_primo: '', _ore_ultimo: '',
+    };
+  }
+
+  // Converte le durate digitate in h:mm nei decimali attesi dall'API.
+  function payloadFlag(flag) {
+    const payload = {
+      ...flag,
+      ore_turno: hmToDec(flag._ore_turno),
+      ore_primo_giorno: hmToDec(flag._ore_primo),
+      ore_ultimo_giorno: hmToDec(flag._ore_ultimo),
+    };
+    delete payload._ore_turno; delete payload._ore_primo; delete payload._ore_ultimo;
+    return payload;
+  }
+
   function addChildFlag(parentId) {
-    nuovoFlag = { nome: '', descrizione: '', parent_id: parentId, entita: 'semplice', tipo: 'lavorativo', componenti: [], peso_turno: null, _ore_turno: '', _ore_primo: '', _ore_ultimo: '' };
+    nuovoFlag = flagVuoto(parentId);
     showAddFlag = true;
   }
   function startEditFlag(f) {
     editingFlag = {
       ...f,
       mostra_in_struttura: !!f.mostra_in_struttura,
+      orario_inizio: f.orario_inizio || '',
+      orario_fine: f.orario_fine || '',
       _ore_turno: decToHm(f.ore_turno),
       _ore_primo: decToHm(f.ore_primo_giorno),
       _ore_ultimo: decToHm(f.ore_ultimo_giorno),
-      componenti: [...(f.componenti || [])],
     };
   }
   async function creaFlag() {
-    const payload = {
-      ...nuovoFlag,
-      ore_turno: hmToDec(nuovoFlag._ore_turno),
-      ore_primo_giorno: hmToDec(nuovoFlag._ore_primo),
-      ore_ultimo_giorno: hmToDec(nuovoFlag._ore_ultimo),
-    };
-    delete payload._ore_turno; delete payload._ore_primo; delete payload._ore_ultimo;
-    const r = await adminApi.creaFlagTurno(payload);
+    const r = await adminApi.creaFlagTurno(payloadFlag(nuovoFlag));
     if (r.ok) {
       flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
-      nuovoFlag = { nome: '', descrizione: '', parent_id: null, entita: 'semplice', tipo: 'lavorativo', componenti: [], peso_turno: null, _ore_turno: '', _ore_primo: '', _ore_ultimo: '' };
+      nuovoFlag = flagVuoto();
       showAddFlag = false;
       setMsg('cfg', 'Flag creato.');
     } else setMsg('cfg', r.errore, false);
   }
   async function salvaFlag() {
-    const payload = {
-      ...editingFlag,
-      ore_turno: hmToDec(editingFlag._ore_turno),
-      ore_primo_giorno: hmToDec(editingFlag._ore_primo),
-      ore_ultimo_giorno: hmToDec(editingFlag._ore_ultimo),
-    };
-    delete payload._ore_turno; delete payload._ore_primo; delete payload._ore_ultimo;
+    const payload = payloadFlag(editingFlag);
     const r = await adminApi.editFlagTurno(payload.id, payload);
     if (r.ok) {
       flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
       editingFlag = null;
       setMsg('cfg', 'Flag aggiornato.');
     } else setMsg('cfg', r.errore, false);
+  }
+
+  /**
+   * Fasce orarie agganciabili a un gruppo della struttura `sg`.
+   *
+   * Una fascia vale una volta sola per struttura — il gruppo E' l'insieme dei
+   * turni di quella fascia — quindi le fasce gia' usate spariscono dal menu.
+   * La fascia del gruppo in modifica resta, o il menu perderebbe il suo valore.
+   *
+   * @param sg — sovragruppo (struttura) a cui appartiene il gruppo
+   * @param gruppoId — id del gruppo in modifica, null se e' nuovo
+   * @param _flags — elenco flag, passato per rendere esplicita la dipendenza
+   */
+  function fasceDisponibili(sg, gruppoId = null, _flags = flagTurno) {
+    const usate = new Set(
+      (sg?.gruppi ?? [])
+        .filter(g => g.id !== gruppoId && g.flag_id != null)
+        .map(g => g.flag_id)
+    );
+    return _flags.filter(f => f.mostra_in_struttura && !usate.has(f.id));
   }
   async function eliminaFlag(id) {
     const r = await adminApi.delFlagTurno(id);
@@ -2036,7 +2044,7 @@
     {#if msgConfig}<div class="alert py-2 small {msgConfig.startsWith('✓')?'alert-success':'alert-danger'}">{msgConfig}</div>{/if}
 
     <!-- ═══ 1. Flag Globali ═══ -->
-    <div class="card mb-4" style="max-width:900px">
+    <div class="card mb-4" style="max-width:1240px">
       <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
         Tipi turno/assenze per caratteristica temporale
         <div class="d-flex gap-2">
@@ -2058,182 +2066,77 @@
                    bind:value={nuovoFlag.descrizione} style="width:150px"
                    on:keydown={e => e.key === 'Enter' && creaFlag()} />
             <select class="form-select form-select-sm" style="width:130px" bind:value={nuovoFlag.parent_id}>
-              <option value={null}>— radice —</option>
+              <option value={null}>— concetto radice —</option>
               {#each flagRadice as fr}
                 <option value={fr.id}>{fr.nome}</option>
               {/each}
             </select>
+            <input class="form-control form-control-sm" placeholder="Inizio" bind:value={nuovoFlag.orario_inizio} style="width:75px"
+                   on:keydown={e => e.key === 'Enter' && creaFlag()} />
+            <input class="form-control form-control-sm" placeholder="Fine" bind:value={nuovoFlag.orario_fine} style="width:75px"
+                   on:keydown={e => e.key === 'Enter' && creaFlag()} />
+            <input class="form-control form-control-sm" type="number" min="0" title="Pausa obbligatoria (minuti)"
+                   placeholder="Pausa" bind:value={nuovoFlag.pausa_minuti} style="width:70px" />
             {#if !nuovoFlag.parent_id}
-              <select class="form-select form-select-sm" style="width:110px" bind:value={nuovoFlag.entita}>
-                <option value="semplice">semplice</option>
-                <option value="composto">composto</option>
-              </select>
               <select class="form-select form-select-sm" style="width:110px" bind:value={nuovoFlag.tipo}>
                 <option value="lavorativo">lavorativo</option>
                 <option value="assenza">assenza</option>
               </select>
-              {#if nuovoFlag.entita === 'composto'}
-                <div class="d-flex gap-1 align-items-center flex-wrap">
-                  {#each flagTurno.filter(x => x.id !== nuovoFlag.id && x.entita === 'semplice') as cf}
-                    <label class="form-check-label small me-1">
-                      <input type="checkbox" class="form-check-input form-check-input-sm me-0"
-                             checked={nuovoFlag.componenti.includes(cf.id)}
-                             on:change={() => {
-                               if (nuovoFlag.componenti.includes(cf.id)) nuovoFlag.componenti = nuovoFlag.componenti.filter(x => x !== cf.id);
-                               else nuovoFlag.componenti = [...nuovoFlag.componenti, cf.id];
-                             }} />
-                      {cf.nome}
-                    </label>
-                  {/each}
-                </div>
-              {/if}
             {/if}
-            <input class="form-control form-control-sm" type="number" placeholder="Peso" bind:value={nuovoFlag.peso_turno} style="width:55px" />
-            <input class="form-control form-control-sm" placeholder="Ore (h:mm)" bind:value={nuovoFlag._ore_turno} style="width:70px" />
             <input class="form-control form-control-sm" placeholder="1° (h:mm)" bind:value={nuovoFlag._ore_primo} style="width:70px" />
             <input class="form-control form-control-sm" placeholder="Ult (h:mm)" bind:value={nuovoFlag._ore_ultimo} style="width:70px" />
             <button class="btn btn-success btn-sm" on:click={creaFlag}><i class="bi bi-check-lg"></i></button>
-            <button class="btn btn-secondary btn-sm" on:click={() => { showAddFlag = false; nuovoFlag = {nome:'',descrizione:'',parent_id:null,tipo:'semplice',componenti:[],peso_turno:null,_ore_turno:'',_ore_primo:'',_ore_ultimo:''}; }}><i class="bi bi-x"></i></button>
+            <button class="btn btn-secondary btn-sm" on:click={() => { showAddFlag = false; nuovoFlag = flagVuoto(); }}><i class="bi bi-x"></i></button>
+          </div>
+          <div class="form-text small mb-2">
+            Ore, durata e peso non si digitano: li ricava il sistema dagli orari e dalla pausa.
           </div>
         {/if}
         {#if flagTurno.length === 0}
           <div class="text-muted small text-center py-3">Nessun flag definito. Crea i flag di base per abilitare la configurazione.</div>
         {:else}
           <table class="table table-sm table-hover table-config table-config-fixed mb-0" style="font-size:.85rem">
-            <thead><tr><th style="width:100px">Nome</th><th style="width:120px">Descrizione</th><th style="width:80px">Parent</th><th style="width:90px">Entità</th><th style="width:90px">Tipo</th><th style="width:55px">Peso</th><th style="width:65px">Ore</th><th style="width:65px">1°</th><th style="width:65px">Ult.</th><th style="width:50px" title="Mostra in struttura turni">Strutt.</th><th style="width:60px"></th></tr></thead>
+            <thead><tr>
+              <th style="width:110px">Nome</th>
+              <th style="width:130px">Descrizione</th>
+              <th style="width:80px">Concetto</th>
+              <th style="width:65px">Inizio</th>
+              <th style="width:65px">Fine</th>
+              <th style="width:60px" title="Pausa obbligatoria in minuti">Pausa</th>
+              <th style="width:60px" title="Lavoro effettivo, senza pausa">Netta</th>
+              <th style="width:60px" title="Durata totale, pausa inclusa">Ore</th>
+              <th style="width:55px">Peso</th>
+              <th style="width:60px">1°</th>
+              <th style="width:60px">Ult.</th>
+              <th style="width:90px">Tipo</th>
+              <th style="width:50px" title="Mostra in struttura turni">Strutt.</th>
+              <th style="width:60px"></th>
+            </tr></thead>
             <tbody>
             {#each flagRadice as fr (fr.id)}
               {@const figli = flagFigli(fr.id)}
-              {@const haFigli = figli.length > 0}
-              {@const expanded = !collapsedFlags.has(fr.id)}
-              <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-              <tr class="{editingFlag?.id === fr.id ? 'table-warning' : 'editable-row'}" on:click={e => { if(editingFlag?.id !== fr.id) startEditFromRow(e, () => startEditFlag(fr)); }}>
-                {#if editingFlag?.id === fr.id}
-                  <td><input class="form-control form-control-sm" use:autoFocus={'nome'} bind:value={editingFlag.nome}
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td><input class="form-control form-control-sm" use:autoFocus={'descrizione'} bind:value={editingFlag.descrizione}
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td>—</td>
-                  <td>
-                    <select class="form-select form-select-sm" use:autoFocus={'entita'} style="min-width:90px" bind:value={editingFlag.entita}
-                      on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)}>
-                      <option value="semplice">semplice</option><option value="composto">composto</option>
-                    </select>
-                    {#if editingFlag.entita === 'composto'}
-                      <div class="mt-1" style="font-size:.75rem">
-                        {#each flagTurno.filter(f => f.id !== editingFlag.id && f.parent_id === editingFlag.parent_id) as cf}
-                          <label class="d-block"><input type="checkbox" checked={editingFlag.componenti?.includes(cf.id)}
-                            on:change={e => { if(e.target.checked) editingFlag.componenti=[...(editingFlag.componenti||[]),cf.id]; else editingFlag.componenti=(editingFlag.componenti||[]).filter(x=>x!==cf.id); }} />
-                            {cf.nome}</label>
-                        {/each}
-                      </div>
-                    {/if}
-                  </td>
-                  <td>
-                    <select class="form-select form-select-sm" style="min-width:90px" bind:value={editingFlag.tipo}
-                      on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)}>
-                      <option value="lavorativo">lavorativo</option><option value="assenza">assenza</option>
-                    </select>
-                  </td>
-                  <td><input class="form-control form-control-sm" use:autoFocus={'peso_turno'} type="number" bind:value={editingFlag.peso_turno} style="min-width:50px;width:60px"
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td><input class="form-control form-control-sm" use:autoFocus={'ore_turno'} bind:value={editingFlag._ore_turno} style="min-width:55px;width:70px" placeholder="h:mm"
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td><input class="form-control form-control-sm" use:autoFocus={'ore_primo'} bind:value={editingFlag._ore_primo} style="min-width:55px;width:70px" placeholder="h:mm"
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td><input class="form-control form-control-sm" use:autoFocus={'ore_ultimo'} bind:value={editingFlag._ore_ultimo} style="min-width:55px;width:70px" placeholder="h:mm"
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td class="text-center"><input type="checkbox" bind:checked={editingFlag.mostra_in_struttura}
-                       on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                  <td style="white-space:nowrap" on:click|stopPropagation>
-                    <button class="btn btn-success btn-sm py-0" on:click={salvaFlag}><i class="bi bi-check-lg"></i></button>
-                    <button class="btn btn-secondary btn-sm py-0" on:click={() => editingFlag=null}><i class="bi bi-x"></i></button>
-                  </td>
-                {:else}
-                  <!-- svelte-ignore a11y-click-events-have-key-events -->
-                  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                  <td class="fw-semibold" data-field="nome">
-                    {#if haFigli}<span class="me-1" style="cursor:pointer;user-select:none" on:click|stopPropagation={() => { if(collapsedFlags.has(fr.id)) collapsedFlags.delete(fr.id); else collapsedFlags.add(fr.id); collapsedFlags = collapsedFlags; }}><i class="bi bi-chevron-{expanded?'down':'right'} small"></i></span>{/if}{fr.nome}
-                  </td>
-                  <td class="small text-muted" data-field="descrizione">{fr.descrizione || '—'}</td>
-                  <td>—</td>
-                  <td class="small" data-field="entita">{fr.entita || 'semplice'}{#if fr.entita === 'composto' && fr.componenti?.length} <span class="text-muted">({fr.componenti.length})</span>{/if}</td>
-                  <td class="small" data-field="tipo">{fr.tipo || 'lavorativo'}</td>
-                  <td class="small" data-field="peso_turno">{fr.peso_turno ?? '—'}</td>
-                  <td class="small" data-field="ore_turno">{decToHm(fr.ore_turno) || '—'}</td>
-                  <td class="small" data-field="ore_primo">{decToHm(fr.ore_primo_giorno) || '—'}</td>
-                  <td class="small" data-field="ore_ultimo">{decToHm(fr.ore_ultimo_giorno) || '—'}</td>
-                  <td class="text-center" data-field="mostra_in_struttura">{fr.mostra_in_struttura ? '✓' : '—'}</td>
-                  <td style="white-space:nowrap" on:click|stopPropagation>
-                    <button class="btn btn-outline-success btn-sm py-0 px-1" title="Aggiungi figlio" on:click={() => addChildFlag(fr.id)}><i class="bi bi-plus"></i></button>
-                    <DeleteButton ondelete={() => eliminaFlag(fr.id)} stopPropagation />
-                  </td>
-                {/if}
-              </tr>
-              {#if expanded}
-              {#each figli as fc (fc.id)}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                <tr class="{editingFlag?.id === fc.id ? 'table-warning' : 'editable-row'}" on:click={e => { if(editingFlag?.id !== fc.id) startEditFromRow(e, () => startEditFlag(fc)); }}>
-                  {#if editingFlag?.id === fc.id}
-                    <td><input class="form-control form-control-sm" use:autoFocus={'nome'} bind:value={editingFlag.nome} style="padding-left:20px"
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td><input class="form-control form-control-sm" use:autoFocus={'descrizione'} bind:value={editingFlag.descrizione}
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td class="small">{fr.nome}</td>
-                    <td>
-                      <select class="form-select form-select-sm" use:autoFocus={'entita'} style="width:90px" bind:value={editingFlag.entita}
-                        on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)}>
-                        <option value="semplice">semplice</option><option value="composto">composto</option>
-                      </select>
-                      {#if editingFlag.entita === 'composto'}
-                        <div class="mt-1" style="font-size:.75rem">
-                          {#each flagTurno.filter(f => f.id !== editingFlag.id && f.parent_id === editingFlag.parent_id) as cf}
-                            <label class="d-block"><input type="checkbox" checked={editingFlag.componenti?.includes(cf.id)}
-                              on:change={e => { if(e.target.checked) editingFlag.componenti=[...(editingFlag.componenti||[]),cf.id]; else editingFlag.componenti=(editingFlag.componenti||[]).filter(x=>x!==cf.id); }} />
-                              {cf.nome}</label>
-                          {/each}
-                        </div>
-                      {/if}
-                    </td>
-                    <td>
-                      <select class="form-select form-select-sm" style="width:90px" bind:value={editingFlag.tipo}
-                        on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)}>
-                        <option value="lavorativo">lavorativo</option><option value="assenza">assenza</option>
-                      </select>
-                    </td>
-                    <td><input class="form-control form-control-sm" use:autoFocus={'peso_turno'} type="number" bind:value={editingFlag.peso_turno} style="min-width:50px;width:60px"
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td><input class="form-control form-control-sm" use:autoFocus={'ore_turno'} bind:value={editingFlag._ore_turno} style="min-width:55px;width:70px" placeholder="h:mm"
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td><input class="form-control form-control-sm" use:autoFocus={'ore_primo'} bind:value={editingFlag._ore_primo} style="min-width:55px;width:70px" placeholder="h:mm"
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td><input class="form-control form-control-sm" use:autoFocus={'ore_ultimo'} bind:value={editingFlag._ore_ultimo} style="min-width:55px;width:70px" placeholder="h:mm"
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td class="text-center"><input type="checkbox" bind:checked={editingFlag.mostra_in_struttura}
-                         on:keydown={editRowKeydown(salvaFlag, () => editingFlag=null)} /></td>
-                    <td style="white-space:nowrap" on:click|stopPropagation>
-                      <button class="btn btn-success btn-sm py-0" on:click={salvaFlag}><i class="bi bi-check-lg"></i></button>
-                      <button class="btn btn-secondary btn-sm py-0" on:click={() => editingFlag=null}><i class="bi bi-x"></i></button>
-                    </td>
-                  {:else}
-                    <td style="padding-left:20px" data-field="nome">└ {fc.nome}</td>
-                    <td class="small text-muted" data-field="descrizione">{fc.descrizione || '—'}</td>
-                    <td class="small">{fr.nome}</td>
-                    <td class="small" data-field="entita">{fc.entita || 'semplice'}{#if fc.entita === 'composto' && fc.componenti?.length} <span class="text-muted">({fc.componenti.length})</span>{/if}</td>
-                    <td class="small" data-field="tipo">{fc.tipo || 'lavorativo'}</td>
-                    <td class="small" data-field="peso_turno">{fc.peso_turno ?? '—'}</td>
-                    <td class="small" data-field="ore_turno">{decToHm(fc.ore_turno) || '—'}</td>
-                    <td class="small" data-field="ore_primo">{decToHm(fc.ore_primo_giorno) || '—'}</td>
-                    <td class="small" data-field="ore_ultimo">{decToHm(fc.ore_ultimo_giorno) || '—'}</td>
-                    <td class="text-center" data-field="mostra_in_struttura">{fc.mostra_in_struttura ? '✓' : '—'}</td>
-                    <td style="white-space:nowrap" on:click|stopPropagation>
-                      <DeleteButton ondelete={() => eliminaFlag(fc.id)} stopPropagation />
-                    </td>
-                  {/if}
-                </tr>
-              {/each}
+              {@const espanso = !collapsedFlags.has(fr.id)}
+              <FlagRow flag={fr} haFigli={figli.length > 0} {espanso}
+                       bind:editing={editingFlag} {autoFocus}
+                       ontogglecollapse={() => {
+                         if (collapsedFlags.has(fr.id)) collapsedFlags.delete(fr.id);
+                         else collapsedFlags.add(fr.id);
+                         collapsedFlags = collapsedFlags;
+                       }}
+                       onstartedit={e => startEditFromRow(e, () => startEditFlag(fr))}
+                       onsave={salvaFlag}
+                       oncancel={() => editingFlag = null}
+                       ondelete={() => eliminaFlag(fr.id)}
+                       onaddchild={() => addChildFlag(fr.id)} />
+              {#if espanso}
+                {#each figli as fc (fc.id)}
+                  <FlagRow flag={fc} figlio parentNome={fr.nome}
+                           bind:editing={editingFlag} {autoFocus}
+                           onstartedit={e => startEditFromRow(e, () => startEditFlag(fc))}
+                           onsave={salvaFlag}
+                           oncancel={() => editingFlag = null}
+                           ondelete={() => eliminaFlag(fc.id)} />
+                {/each}
               {/if}
             {/each}
             </tbody>
@@ -2933,7 +2836,7 @@
                 />
               {/if}
               <button class="btn btn-outline-success btn-sm py-0 px-1 ms-2"
-                      on:click={() => { activeAddTurno=null; activeAddGruppo = activeAddGruppo===sg.id?null:sg.id; nuovoGruppo={nome:'',sigla:'',flag_id:flagTurno.find(f=>f.mostra_in_struttura)?.id??null}; }}>
+                      on:click={() => { activeAddTurno=null; activeAddGruppo = activeAddGruppo===sg.id?null:sg.id; nuovoGruppo={nome:'',sigla:'',flag_id:fasceDisponibili(sg, null, flagTurno)[0]?.id ?? null}; }}>
                 <i class="bi bi-plus-lg"></i> Gruppo
               </button>
               <button class="btn btn-outline-primary btn-sm py-0 px-1" title="Salva struttura"
@@ -2960,8 +2863,8 @@
                        bind:value={editingValue.sigla} on:keydown={onEditKeydown} />
                 <label class="form-label mb-0 small text-muted">Flag</label>
                 <select class="form-select form-select-sm" style="width:140px" bind:value={editingValue.flag_id}>
-                  <option value={null}>— nessun flag —</option>
-                  {#each flagTurno.filter(f => f.mostra_in_struttura) as f}
+                  <option value={null}>— nessuna fascia —</option>
+                  {#each fasceDisponibili(sg, g.id, flagTurno) as f}
                     <option value={f.id}>{f.parent_id ? '└ ' : ''}{f.nome}</option>
                   {/each}
                 </select>
@@ -3208,8 +3111,8 @@
                      on:keydown={e => e.key === 'Enter' && addGruppo(sg.id)} />
               <label class="form-label mb-0 small text-muted">Flag</label>
               <select class="form-select form-select-sm" style="width:140px" bind:value={nuovoGruppo.flag_id}>
-                <option value={null}>— nessun flag —</option>
-                {#each flagTurno.filter(f => f.mostra_in_struttura) as f}
+                <option value={null}>— nessuna fascia —</option>
+                {#each fasceDisponibili(sg, null, flagTurno) as f}
                   <option value={f.id}>{f.parent_id ? '└ ' : ''}{f.nome}</option>
                 {/each}
               </select>
@@ -3223,7 +3126,7 @@
           {:else}
             <div class="stru-g d-flex align-items-center border-bottom">
               <button class="btn btn-outline-success btn-sm py-0 px-1"
-                      on:click={() => { activeAddTurno=null; activeAddGruppo=sg.id; nuovoGruppo={nome:'',sigla:'',flag_id:flagTurno.find(f=>f.mostra_in_struttura)?.id??null}; }}>
+                      on:click={() => { activeAddTurno=null; activeAddGruppo=sg.id; nuovoGruppo={nome:'',sigla:'',flag_id:fasceDisponibili(sg, null, flagTurno)[0]?.id ?? null}; }}>
                 <i class="bi bi-plus-lg"></i> Gruppo
               </button>
             </div>

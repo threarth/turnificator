@@ -25,8 +25,7 @@ from flask_socketio import SocketIO
 from app.config import Config
 from app.db import close_db, init_db, get_master_db
 from app.services.fasce_orarie import (
-    DURATA_TURNO_TIPO_DEFAULT_MINUTI, NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
-    FormatoOrarioNonValido, ricalcola_parametri
+    DURATA_TURNO_TIPO_DEFAULT_MINUTI, PAUSA_DEFAULT_MINUTI, ricalcola_tutte
 )
 
 log = logging.getLogger(__name__)
@@ -327,7 +326,6 @@ def _migra_colonne(db):
         ('flag_turno',         'ore_primo_giorno',    'REAL DEFAULT NULL'),
         ('flag_turno',         'ore_ultimo_giorno',   'REAL DEFAULT NULL'),
         ('flag_turno',         'mostra_in_struttura', 'INTEGER NOT NULL DEFAULT 1'),
-        # entita: creata dalla pre-migrazione in db.py (rename tipo→entita)
         # Snapshot parametri ore/peso in calendario_turni
         ('calendario_turni',   'peso_turno',          'INTEGER NOT NULL DEFAULT 1'),
         ('calendario_turni',   'ore_turno',           'REAL DEFAULT NULL'),
@@ -450,9 +448,10 @@ def _migra_colonne(db):
 
     # Seed dei flag e derivazione dei parametri: dopo le ALTER, perche'
     # inseriscono e leggono le colonne appena aggiunte.
+    _rimuovi_concetto_composto(db)
     _inserisci_flag_default(db)
     _migra_gruppi_su_fasce(db)
-    _ricalcola_parametri_fasce(db)
+    ricalcola_tutte(db)
     _crea_indice_fascia_unica(db)
 
     # Rinomina peso_solver → peso_priorita_solver
@@ -467,6 +466,37 @@ def _migra_colonne(db):
             log.warning('Rinomina peso_solver in %s fallita: %s', tabella, e)
 
 
+def _rimuovi_concetto_composto(db):
+    """
+    Elimina il concetto di flag "composto": colonna `entita` e tabella
+    `flag_composizione`.
+
+    Feature removal. Un flag composto elencava i flag che lo compongono
+    (lunga = mattina + pomeriggio); con le fasce orarie la stessa
+    informazione sta negli orari della fascia (lunga e' 08:00-20:40), quindi
+    la composizione e' una duplicazione che puo' divergere dagli orari.
+
+    Idempotente: entrambi i passi sono protetti da un controllo di esistenza,
+    cosi' l'avvio successivo non trova piu' nulla da fare.
+    """
+    try:
+        db.execute('DROP TABLE IF EXISTS flag_composizione')
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log.warning('Rimozione della tabella flag_composizione fallita: %s', e)
+
+    try:
+        colonne = [r[1] for r in db.execute('PRAGMA table_info(flag_turno)').fetchall()]
+        if 'entita' in colonne:
+            db.execute('ALTER TABLE flag_turno DROP COLUMN entita')
+            db.commit()
+            log.info('Rimossa la colonna flag_turno.entita')
+    except Exception as e:
+        db.rollback()
+        log.warning('Rimozione della colonna flag_turno.entita fallita: %s', e)
+
+
 def _inserisci_flag_default(db):
     """
     Inserisce i flag globali default se non esistono.
@@ -476,7 +506,7 @@ def _inserisci_flag_default(db):
     e i flag assenza come root.
 
     Durate, ore e peso non si scrivono qui: li deriva dagli orari
-    _ricalcola_parametri_fasce().
+    fasce_orarie.ricalcola_tutte().
     """
     try:
         for nome, descrizione, netta, pausa in CONCETTI_ROOT:
@@ -597,59 +627,6 @@ def _migra_gruppi_su_fasce(db):
                 "Migrazione gruppi da '%s' a '%s' fallita: %s",
                 nome_root, nome_fascia, e
             )
-
-
-def _ricalcola_parametri_fasce(db):
-    """
-    Ricalcola durate, ore e peso di ogni fascia a partire da orari e pausa.
-
-    Idempotente e auto-riparante: i campi derivati non si scrivono mai a
-    mano, quindi ricalcolarli a ogni avvio riallinea eventuali divergenze.
-
-    Lascia intatti i flag privi sia di orari sia di durata netta — i concetti
-    root diversi da turno_tipo e i flag assenza — perche' li' un ricalcolo
-    azzererebbe le ore inserite a mano prima delle fasce orarie.
-    """
-    try:
-        flag = [dict(r) for r in db.execute(
-            "SELECT id, nome, orario_inizio, orario_fine, pausa_minuti, "
-            "durata_netta_minuti FROM flag_turno"
-        ).fetchall()]
-    except Exception as e:
-        log.warning('Lettura flag per il ricalcolo fasce fallita: %s', e)
-        return
-
-    netta_turno_tipo = next(
-        (f['durata_netta_minuti'] for f in flag if f['nome'] == NOME_TURNO_TIPO),
-        None
-    ) or DURATA_TURNO_TIPO_DEFAULT_MINUTI
-
-    try:
-        for fascia in flag:
-            try:
-                derivati = ricalcola_parametri(fascia, netta_turno_tipo)
-            except FormatoOrarioNonValido as e:
-                log.warning(
-                    "Fascia '%s': orari non validi, parametri non ricalcolati "
-                    "(%s)", fascia['nome'], e
-                )
-                continue
-
-            if derivati is None:
-                continue
-
-            db.execute(
-                "UPDATE flag_turno SET durata_netta_minuti = ?, "
-                "durata_totale_minuti = ?, ore_turno = ?, peso_turno = ? "
-                "WHERE id = ?",
-                (derivati['durata_netta_minuti'], derivati['durata_totale_minuti'],
-                 derivati['ore_turno'], derivati['peso_turno'], fascia['id'])
-            )
-
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        log.warning('Ricalcolo parametri fasce fallito: %s', e)
 
 
 def _crea_indice_fascia_unica(db):

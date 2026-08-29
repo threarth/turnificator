@@ -66,7 +66,6 @@ CREATE TABLE IF NOT EXISTS flag_turno (
     ore_primo_giorno  REAL    DEFAULT NULL,
     ore_ultimo_giorno REAL    DEFAULT NULL,
     mostra_in_struttura INTEGER NOT NULL DEFAULT 1,
-    entita            TEXT    NOT NULL DEFAULT 'semplice' CHECK(entita IN ('semplice', 'composto')),
     tipo              TEXT    NOT NULL DEFAULT 'lavorativo' CHECK(tipo IN ('lavorativo', 'assenza'))
 );
 
@@ -76,20 +75,20 @@ CREATE TABLE IF NOT EXISTS flag_turno (
 -- del peso: 380 minuti = 6h20 di lavoro effettivo.
 INSERT OR IGNORE INTO flag_turno
     (nome, parent_id, descrizione, durata_netta_minuti, pausa_minuti,
-     mostra_in_struttura, entita, tipo) VALUES
-    ('turno_tipo',  NULL, 'Turno tipo — unita di misura del peso', 380,  10, 0, 'semplice', 'lavorativo'),
-    ('diurno',      NULL, 'Turno diurno generico',                 NULL, 10, 0, 'semplice', 'lavorativo'),
-    ('notturno',    NULL, 'Turno notturno',                        NULL, 10, 0, 'semplice', 'lavorativo'),
-    ('guardia_24h', NULL, 'Guardia 24 ore',                        NULL,  0, 0, 'semplice', 'lavorativo');
+     mostra_in_struttura, tipo) VALUES
+    ('turno_tipo',  NULL, 'Turno tipo — unita di misura del peso', 380,  10, 0, 'lavorativo'),
+    ('diurno',      NULL, 'Turno diurno generico',                 NULL, 10, 0, 'lavorativo'),
+    ('notturno',    NULL, 'Turno notturno',                        NULL, 10, 0, 'lavorativo'),
+    ('guardia_24h', NULL, 'Guardia 24 ore',                        NULL,  0, 0, 'lavorativo');
 
 -- Flag default — assenze (root, mostra_in_struttura=0)
-INSERT OR IGNORE INTO flag_turno (nome, parent_id, descrizione, entita, tipo, mostra_in_struttura) VALUES
-    ('ferie',    NULL, 'Ferie',          'semplice', 'assenza', 0),
-    ('agg',      NULL, 'Aggiornamento',  'semplice', 'assenza', 0),
-    ('malattia', NULL, 'Malattia',       'semplice', 'assenza', 0),
-    ('riposo',   NULL, 'Riposo',         'semplice', 'assenza', 0),
-    ('permesso', NULL, 'Permesso',       'semplice', 'assenza', 0),
-    ('legge',    NULL, 'Legge',          'semplice', 'assenza', 0);
+INSERT OR IGNORE INTO flag_turno (nome, parent_id, descrizione, tipo, mostra_in_struttura) VALUES
+    ('ferie',    NULL, 'Ferie',          'assenza', 0),
+    ('agg',      NULL, 'Aggiornamento',  'assenza', 0),
+    ('malattia', NULL, 'Malattia',       'assenza', 0),
+    ('riposo',   NULL, 'Riposo',         'assenza', 0),
+    ('permesso', NULL, 'Permesso',       'assenza', 0),
+    ('legge',    NULL, 'Legge',          'assenza', 0);
 
 -- Flag default — fasce orarie: i figli dei concetti, con gli orari concreti.
 -- Durate, ore e peso non si scrivono qui: li deriva il ricalcolo all'avvio.
@@ -100,27 +99,6 @@ INSERT OR IGNORE INTO flag_turno
     ('lunga',      (SELECT id FROM flag_turno WHERE nome='diurno'),      'Fascia lunga',      '08:00', '20:40', 10),
     ('notte',      (SELECT id FROM flag_turno WHERE nome='notturno'),    'Fascia notte',      '20:00', '08:40', 10),
     ('guardia',    (SELECT id FROM flag_turno WHERE nome='guardia_24h'), 'Fascia guardia',    '00:00', '24:00',  0);
-UPDATE flag_turno SET entita = 'composto' WHERE nome = 'lunga';
-
--- =============================================================================
--- TABELLA: flag_composizione
--- Relazione M:N che indica quali flag compongono un flag composto.
--- Es: is_lunga è composto da is_mattina + is_pomeriggio.
--- =============================================================================
-CREATE TABLE IF NOT EXISTS flag_composizione (
-    flag_id            INTEGER NOT NULL REFERENCES flag_turno(id) ON DELETE CASCADE,
-    componente_flag_id INTEGER NOT NULL REFERENCES flag_turno(id) ON DELETE CASCADE,
-    PRIMARY KEY (flag_id, componente_flag_id)
-);
-
--- Seed: lunga = mattina + pomeriggio
-INSERT OR IGNORE INTO flag_composizione (flag_id, componente_flag_id)
-VALUES
-    ((SELECT id FROM flag_turno WHERE nome='lunga'),
-     (SELECT id FROM flag_turno WHERE nome='mattina')),
-    ((SELECT id FROM flag_turno WHERE nome='lunga'),
-     (SELECT id FROM flag_turno WHERE nome='pomeriggio'));
-
 -- Nascondi da struttura turni i concetti root: si agganciano le fasce orarie,
 -- mai i concetti. (I flag assenza hanno gia' mostra_in_struttura=0 nel seed.)
 UPDATE flag_turno SET mostra_in_struttura = 0

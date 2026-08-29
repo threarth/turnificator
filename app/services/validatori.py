@@ -37,7 +37,7 @@ def _get_flag_map():
     if _flag_cache is not None:
         return _flag_cache
     rows = query_all(
-        "SELECT f.id, f.nome, f.parent_id, f.entita, f.tipo, "
+        "SELECT f.id, f.nome, f.parent_id, f.tipo, "
         "p.nome AS parent_nome "
         "FROM flag_turno f LEFT JOIN flag_turno p ON f.parent_id = p.id",
         ()
