@@ -69,11 +69,13 @@ REPARTI_DEMO = [
      ['TC', 'RM', 'Angiografia']),
 ]
 
-# Flag temporale associato a ogni gruppo, per nome del gruppo.
-FLAG_PER_GRUPPO = {
+# Fascia oraria associata a ogni gruppo, per nome del gruppo.
+# Sono le fasce, non i concetti root: 'notturno' e' il concetto, 'notte' e'
+# la fascia con gli orari concreti.
+FASCIA_PER_GRUPPO = {
     'Mattina': 'mattina',
     'Pomeriggio': 'pomeriggio',
-    'Notte': 'notturno',
+    'Notte': 'notte',
 }
 
 BCRYPT_ROUNDS = 12
@@ -204,7 +206,7 @@ def popola_struttura(conn):
                 "INSERT INTO gruppi (sovragruppo_id, sigla, nome, flag_id, ordine) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (sg_id, sigla_gruppo, nome_gruppo,
-                 _id_flag(conn, FLAG_PER_GRUPPO.get(nome_gruppo, 'mattina')),
+                 _id_flag(conn, FASCIA_PER_GRUPPO.get(nome_gruppo, 'mattina')),
                  indice_g * PASSO_ORDINE)
             )
             gruppo_id = cur.lastrowid

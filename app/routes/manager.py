@@ -37,6 +37,9 @@ from app.services.history import aggiungi_step, undo, redo, get_info_history
 from app.services.wd_history import wd_aggiungi_step, wd_undo, wd_redo, wd_get_info_history
 from app.services.solver import esegui_solver
 from app.services.accesso_manager import manager_puo_turno, manager_puo_utente
+from app.services.fasce_orarie import (
+    carica_mappa_flag, discende_da_nome, e_notturna
+)
 from app.services.config_snapshot import (
     carica_config_snapshot,
     snap_manager_puo_turno, snap_manager_puo_utente,
@@ -279,13 +282,17 @@ def struttura_calendario(cal_id):
     )
 
     # ── Notti ultimo giorno mese precedente ──────────────────────
-    # Trova turni notturni nel calendario corrente
-    notti_local_ids = []
-    for sg in sovragruppi:
-        for g_item in sg['gruppi']:
-            for t in g_item['turni']:
-                if (t.get('flag_nome') or '').lower() == 'notturno':
-                    notti_local_ids.append(t['local_id'])
+    # Trova i turni notturni del calendario corrente. Il riconoscimento passa
+    # dalla gerarchia e non dal nome: una fascia notturna puo' chiamarsi come
+    # vuole l'utente, purche' discenda dal concetto 'notturno'.
+    mappa_flag = carica_mappa_flag(config_snap)
+    notti_local_ids = [
+        t['local_id']
+        for sg in sovragruppi
+        for g_item in sg['gruppi']
+        for t in g_item['turni']
+        if e_notturna(t.get('flag_nome'), mappa_flag)
+    ]
 
     notti_mese_prec = None  # None = nessun calendario precedente
     if notti_local_ids:
@@ -2692,6 +2699,9 @@ def applica_posti_fissi(cal_id):
         )
         turno_flag = {r['id']: r.get('flag_nome', '') for r in tf_rows}
 
+    # Gerarchia dei flag per il confronto desiderata ↔ fascia del turno.
+    mappa_flag_wd = carica_mappa_flag() if rispetta_desiderata else {}
+
     inseriti = 0
     saltati = 0
     non_mappati = 0
@@ -2760,9 +2770,14 @@ def applica_posti_fissi(cal_id):
                             })
                             continue
                     elif wd['req_tipo'] == 'lavorativo' and wd.get('req_flag_nome'):
-                        # L'utente vuole lavorare con un flag specifico
-                        flag_turno = turno_flag.get(ct_id, '')
-                        if flag_turno and wd['req_flag_nome'] != flag_turno:
+                        # L'utente vuole lavorare in una fascia specifica.
+                        # La richiesta puo' indicare un concetto ("la notte")
+                        # e il turno una sua fascia ("notte"): il confronto
+                        # e' di discendenza, non di uguaglianza fra nomi.
+                        fascia_turno = turno_flag.get(ct_id, '')
+                        if fascia_turno and not discende_da_nome(
+                            fascia_turno, wd['req_flag_nome'], mappa_flag_wd
+                        ):
                             # Cerca un altro utente compatibile
                             trovato = False
                             for j in range(len(user_ids)):
@@ -2776,7 +2791,9 @@ def applica_posti_fissi(cal_id):
                                     continue
                                 if wd_alt['req_tipo'] == 'lavorativo':
                                     alt_flag = wd_alt.get('req_flag_nome', '')
-                                    if not alt_flag or alt_flag == flag_turno:
+                                    if not alt_flag or discende_da_nome(
+                                        fascia_turno, alt_flag, mappa_flag_wd
+                                    ):
                                         uid = alt_uid
                                         trovato = True
                                         break

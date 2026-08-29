@@ -35,20 +35,34 @@ CREATE TABLE IF NOT EXISTS users (
 -- TABELLA: flag_turno
 -- Registro globale dei flag semantici con gerarchia parent.
 -- Usato per classificare turni e desiderata. Unico vocabolario condiviso.
--- I flag lavorativi hanno parametri ore/peso per il calcolo ore.
 --
 -- Struttura:
---   Lavorativi: is_diurno → is_mattina, is_pomeriggio, is_lunga
---               is_notturno (root), is_guardia_24h (root)
---   Assenza:    is_ferie, is_agg, is_malattia, is_riposo, is_permesso, is_legge (root)
+--   Concetti root, nascosti perche' non agganciabili ai gruppi:
+--       turno_tipo   unita' di misura del peso (durata netta 6h20)
+--       diurno       → fasce mattina, pomeriggio, lunga
+--       notturno     → fascia notte
+--       guardia_24h  → fascia guardia
+--   Le fasce orarie sono i figli dei concetti: portano gli orari concreti
+--   e sono le sole agganciabili ai gruppi. Possono essere rinominate: il
+--   riferimento stabile per il codice e' il nome del concetto root.
+--   Assenza: ferie, agg, malattia, riposo, permesso, legge (root)
+--
+-- Campi derivati, ricalcolati all'avvio da app/services/fasce_orarie.py e mai
+-- digitati dall'utente: durata_netta_minuti, durata_totale_minuti, ore_turno,
+-- peso_turno. L'utente compila solo orari e pausa.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS flag_turno (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     nome              TEXT    NOT NULL UNIQUE,
     parent_id         INTEGER REFERENCES flag_turno(id),
     descrizione       TEXT,
-    peso_turno        INTEGER DEFAULT NULL,
-    ore_turno         REAL    DEFAULT NULL,
+    orario_inizio     TEXT    DEFAULT NULL,  -- 'HH:MM', NULL sui concetti root
+    orario_fine       TEXT    DEFAULT NULL,  -- 'HH:MM'; = inizio significa 24 ore
+    pausa_minuti      INTEGER NOT NULL DEFAULT 10,  -- pausa obbligatoria, si somma alla netta
+    durata_netta_minuti  INTEGER DEFAULT NULL,  -- lavoro effettivo, dagli orari
+    durata_totale_minuti INTEGER DEFAULT NULL,  -- netta + pausa
+    peso_turno        REAL    DEFAULT NULL,  -- netta / netta del turno tipo
+    ore_turno         REAL    DEFAULT NULL,  -- durata totale in ore decimali
     ore_primo_giorno  REAL    DEFAULT NULL,
     ore_ultimo_giorno REAL    DEFAULT NULL,
     mostra_in_struttura INTEGER NOT NULL DEFAULT 1,
@@ -56,11 +70,17 @@ CREATE TABLE IF NOT EXISTS flag_turno (
     tipo              TEXT    NOT NULL DEFAULT 'lavorativo' CHECK(tipo IN ('lavorativo', 'assenza'))
 );
 
--- Flag default — root lavorativi
-INSERT OR IGNORE INTO flag_turno (nome, parent_id, descrizione, peso_turno, ore_turno, entita, tipo) VALUES
-    ('diurno',       NULL, 'Turno diurno generico',   1, NULL, 'semplice', 'lavorativo'),
-    ('notturno',     NULL, 'Turno notturno',           2, 8.0, 'semplice', 'lavorativo'),
-    ('guardia_24h',  NULL, 'Guardia 24 ore',           3, 24.0, 'semplice', 'lavorativo');
+-- Flag default — concetti root lavorativi.
+-- Non portano orari: quelli stanno sulle fasce figlie. Fa eccezione
+-- turno_tipo, che non classifica nulla ed esiste solo come unita' di misura
+-- del peso: 380 minuti = 6h20 di lavoro effettivo.
+INSERT OR IGNORE INTO flag_turno
+    (nome, parent_id, descrizione, durata_netta_minuti, pausa_minuti,
+     mostra_in_struttura, entita, tipo) VALUES
+    ('turno_tipo',  NULL, 'Turno tipo — unita di misura del peso', 380,  10, 0, 'semplice', 'lavorativo'),
+    ('diurno',      NULL, 'Turno diurno generico',                 NULL, 10, 0, 'semplice', 'lavorativo'),
+    ('notturno',    NULL, 'Turno notturno',                        NULL, 10, 0, 'semplice', 'lavorativo'),
+    ('guardia_24h', NULL, 'Guardia 24 ore',                        NULL,  0, 0, 'semplice', 'lavorativo');
 
 -- Flag default — assenze (root, mostra_in_struttura=0)
 INSERT OR IGNORE INTO flag_turno (nome, parent_id, descrizione, entita, tipo, mostra_in_struttura) VALUES
@@ -71,11 +91,15 @@ INSERT OR IGNORE INTO flag_turno (nome, parent_id, descrizione, entita, tipo, mo
     ('permesso', NULL, 'Permesso',       'semplice', 'assenza', 0),
     ('legge',    NULL, 'Legge',          'semplice', 'assenza', 0);
 
--- Flag default — figli di diurno
-INSERT OR IGNORE INTO flag_turno (nome, parent_id, descrizione, peso_turno) VALUES
-    ('mattina',    (SELECT id FROM flag_turno WHERE nome='diurno'), 'Turno mattina',        1),
-    ('pomeriggio', (SELECT id FROM flag_turno WHERE nome='diurno'), 'Turno pomeriggio',     1),
-    ('lunga',      (SELECT id FROM flag_turno WHERE nome='diurno'), 'Turno lungo diurno',   1);
+-- Flag default — fasce orarie: i figli dei concetti, con gli orari concreti.
+-- Durate, ore e peso non si scrivono qui: li deriva il ricalcolo all'avvio.
+INSERT OR IGNORE INTO flag_turno
+    (nome, parent_id, descrizione, orario_inizio, orario_fine, pausa_minuti) VALUES
+    ('mattina',    (SELECT id FROM flag_turno WHERE nome='diurno'),      'Fascia mattina',    '08:00', '14:20', 10),
+    ('pomeriggio', (SELECT id FROM flag_turno WHERE nome='diurno'),      'Fascia pomeriggio', '14:00', '20:20', 10),
+    ('lunga',      (SELECT id FROM flag_turno WHERE nome='diurno'),      'Fascia lunga',      '08:00', '20:40', 10),
+    ('notte',      (SELECT id FROM flag_turno WHERE nome='notturno'),    'Fascia notte',      '20:00', '08:40', 10),
+    ('guardia',    (SELECT id FROM flag_turno WHERE nome='guardia_24h'), 'Fascia guardia',    '00:00', '24:00',  0);
 UPDATE flag_turno SET entita = 'composto' WHERE nome = 'lunga';
 
 -- =============================================================================
@@ -97,9 +121,10 @@ VALUES
     ((SELECT id FROM flag_turno WHERE nome='lunga'),
      (SELECT id FROM flag_turno WHERE nome='pomeriggio'));
 
--- Nascondi da struttura turni i flag non associabili a gruppi
--- (i flag assenza hanno gia' mostra_in_struttura=0 nel seed)
-UPDATE flag_turno SET mostra_in_struttura = 0 WHERE nome = 'diurno';
+-- Nascondi da struttura turni i concetti root: si agganciano le fasce orarie,
+-- mai i concetti. (I flag assenza hanno gia' mostra_in_struttura=0 nel seed.)
+UPDATE flag_turno SET mostra_in_struttura = 0
+ WHERE nome IN ('turno_tipo', 'diurno', 'notturno', 'guardia_24h');
 
 -- =============================================================================
 -- TABELLA: struttura_presets
@@ -409,7 +434,13 @@ CREATE TABLE IF NOT EXISTS sovragruppi (
 
 -- =============================================================================
 -- TABELLA: gruppi
--- Livello 2 della gerarchia turni. Ogni gruppo ha un flag semantico.
+-- Livello 2 della gerarchia turni. Un gruppo E' l'insieme dei turni di una
+-- stessa fascia oraria dentro una stessa struttura, quindi la coppia
+-- (sovragruppo_id, flag_id) e' unica: la mattina di un reparto si definisce
+-- una volta sola.
+--
+-- L'indice che lo impone e' creato da app/__init__.py e non qui, perche' su
+-- un tenant con duplicati preesistenti fallirebbe abortendo l'intero schema.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS gruppi (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

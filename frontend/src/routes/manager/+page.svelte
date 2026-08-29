@@ -13,6 +13,7 @@
   import { clickOutside } from '$lib/admin/actions.js';
   import AppearanceEditor, { APPEARANCE_DEFAULT } from '$lib/admin/AppearanceEditor.svelte';
   import DesiderataInserimento from '$lib/DesiderataInserimento.svelte';
+  import { costruisciMappaFlag, discendeDaNome, eNotturna } from '$lib/fasceOrarie.js';
 
   // ── Stato principale ──────────────────────────────────────────
   let calendari  = $state([]);
@@ -113,6 +114,9 @@
   let solverEditVSolver = $state([]);            // vincoli solver in editing
   let solverEditEscl    = $state([]);            // esclusioni in editing
   let solverFlagTurno   = $state([]);            // flag per dropdown
+  // Gerarchia dei flag: serve a riconoscere le fasce dalla discendenza e
+  // non dal nome, che l'utente puo' cambiare.
+  let mappaFlag = $derived(costruisciMappaFlag(solverFlagTurno));
   let solverTipiQual    = $state([]);            // tipi qualitativo per dropdown
   let solverVincoliGlob = $state([]);            // chiavi vincoli globali per dropdown
   let solverOrfani      = $state(null);          // orfani accesso manager
@@ -1085,7 +1089,7 @@
     for (const sg of struttura.sovragruppi)
       for (const g of sg.gruppi)
         for (const t of g.turni)
-          if ((t.flag_nome || '').toLowerCase() === 'notturno') s.add(t.local_id);
+          if (eNotturna(t.flag_nome, mappaFlag)) s.add(t.local_id);
     return s;
   });
   // true = ci sono turni notturni nel calendario
@@ -1150,7 +1154,7 @@
           const oreTurno = t.ore_turno;
           const orePrimo = t.ore_primo_giorno;
           const oreUltimo = t.ore_ultimo_giorno;
-          const tipoTemp = (t.flag_nome || '').toLowerCase();
+          const fasciaTurno = t.flag_nome;
           for (let g = 1; g <= numGiorni; g++) {
             const uid = localAss[`${t.id}-${g}`]?.user_id;
             if (uid == null) continue;
@@ -1166,7 +1170,9 @@
             // Conteggi configurabili
             const dow = gs[g]; // 0=Dom, 6=Sab
             for (const c of conteggi) {
-              const matchTipo = tipoTemp === (c.flag_nome || c.tipo_temporale || '').toLowerCase();
+              // Un conteggio configurato sul concetto (es. 'notturno') deve
+              // contare tutte le sue fasce, comunque siano state rinominate.
+              const matchTipo = discendeDaNome(fasciaTurno, c.flag_nome, mappaFlag);
               const matchGiorno = c.giorno_settimana == null || dow === c.giorno_settimana;
               const match = c.negato ? (!matchTipo && matchGiorno) : (matchTipo && matchGiorno);
               if (match) {

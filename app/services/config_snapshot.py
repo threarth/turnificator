@@ -13,6 +13,8 @@ Contenuto del JSON config_snapshot:
 - accesso_utenti: [{manager_id, user_id}]
 - flag_turno: [{id, nome, parent_id, peso_turno, ore_turno,
                  ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura,
+                 orario_inizio, orario_fine, pausa_minuti,
+                 durata_netta_minuti, durata_totale_minuti,
                  entita, tipo}]
 
 Nota: esclusioni_manuali e celle_bloccate sono per-calendario (campi JSON in
@@ -90,7 +92,8 @@ def crea_config_snapshot(preset_id=None):
             dict(r) for r in query_all(
                 "SELECT id, nome, parent_id, peso_turno, ore_turno, "
                 "ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura, "
-                "entita, tipo "
+                "entita, tipo, orario_inizio, orario_fine, pausa_minuti, "
+                "durata_netta_minuti, durata_totale_minuti "
                 "FROM flag_turno"
             )
         ],

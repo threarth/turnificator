@@ -24,10 +24,53 @@ from flask_socketio import SocketIO
 
 from app.config import Config
 from app.db import close_db, init_db, get_master_db
+from app.services.fasce_orarie import (
+    DURATA_TURNO_TIPO_DEFAULT_MINUTI, NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
+    FormatoOrarioNonValido, ricalcola_parametri
+)
 
 log = logging.getLogger(__name__)
 
 socketio = SocketIO()
+
+# Concetti root delle fasce orarie: (nome, descrizione, durata netta, pausa).
+# Solo turno_tipo porta una durata, perche' non classifica turni ma fa da
+# unita' di misura del peso. Gli altri concetti non hanno orari propri: li
+# portano le fasce figlie.
+CONCETTI_ROOT = [
+    ('turno_tipo',  'Turno tipo — unita di misura del peso',
+     DURATA_TURNO_TIPO_DEFAULT_MINUTI, PAUSA_DEFAULT_MINUTI),
+    ('diurno',      'Turno diurno generico', None, PAUSA_DEFAULT_MINUTI),
+    ('notturno',    'Turno notturno',        None, PAUSA_DEFAULT_MINUTI),
+    ('guardia_24h', 'Guardia 24 ore',        None, 0),
+]
+
+# Fasce orarie default: (nome, concetto padre, descrizione, inizio, fine, pausa).
+FASCE_DEFAULT = [
+    ('mattina',    'diurno',      'Fascia mattina',    '08:00', '14:20', PAUSA_DEFAULT_MINUTI),
+    ('pomeriggio', 'diurno',      'Fascia pomeriggio', '14:00', '20:20', PAUSA_DEFAULT_MINUTI),
+    ('lunga',      'diurno',      'Fascia lunga',      '08:00', '20:40', PAUSA_DEFAULT_MINUTI),
+    ('notte',      'notturno',    'Fascia notte',      '20:00', '08:40', PAUSA_DEFAULT_MINUTI),
+    ('guardia',    'guardia_24h', 'Fascia guardia',    '00:00', '24:00', 0),
+]
+
+# Gruppi agganciati a un concetto root vanno spostati sulla fascia
+# corrispondente. Per 'diurno' non c'e' una risposta univoca fra mattina,
+# pomeriggio e lunga, quindi quei gruppi si segnalano soltanto.
+MIGRAZIONE_ROOT_SU_FASCIA = {
+    'notturno': 'notte',
+    'guardia_24h': 'guardia',
+}
+
+# Flag assenza default: (nome, descrizione).
+FLAG_ASSENZA = [
+    ('ferie',    'Ferie'),
+    ('agg',      'Aggiornamento'),
+    ('malattia', 'Malattia'),
+    ('riposo',   'Riposo'),
+    ('permesso', 'Permesso'),
+    ('legge',    'Legge'),
+]
 
 
 def create_app(config_class=Config):
@@ -268,7 +311,18 @@ def _migra_colonne(db):
         ('calendario_turni',   'turno_style',         "TEXT NOT NULL DEFAULT '{}'"),
         ('calendari',          'regole_snapshot',     "TEXT NOT NULL DEFAULT '[]'"),
         # Parametri ore/peso su flag_turno
+        # peso_turno resta dichiarata INTEGER sui DB gia' esistenti: SQLite ha
+        # tipizzazione dinamica e l'affinita' INTEGER converte solo quando la
+        # conversione e' senza perdita, quindi i pesi frazionari (guardia 24h
+        # vale 3.79 turni tipo) si conservano senza migrare il tipo.
         ('flag_turno',         'peso_turno',          'INTEGER DEFAULT NULL'),
+        # Fasce orarie: orari, pausa obbligatoria e durate su flag_turno
+        ('flag_turno',         'tipo',                "TEXT NOT NULL DEFAULT 'lavorativo'"),
+        ('flag_turno',         'orario_inizio',       'TEXT DEFAULT NULL'),
+        ('flag_turno',         'orario_fine',         'TEXT DEFAULT NULL'),
+        ('flag_turno',         'pausa_minuti',        'INTEGER NOT NULL DEFAULT 10'),
+        ('flag_turno',         'durata_netta_minuti', 'INTEGER DEFAULT NULL'),
+        ('flag_turno',         'durata_totale_minuti', 'INTEGER DEFAULT NULL'),
         ('flag_turno',         'ore_turno',           'REAL DEFAULT NULL'),
         ('flag_turno',         'ore_primo_giorno',    'REAL DEFAULT NULL'),
         ('flag_turno',         'ore_ultimo_giorno',   'REAL DEFAULT NULL'),
@@ -384,9 +438,6 @@ def _migra_colonne(db):
         except Exception as e:
             log.warning('Creazione tabella fallita: %s', e)
 
-    # Inserisci flag default se non esistono
-    _inserisci_flag_default(db)
-
     # Aggiungi colonne mancanti
     for tabella, colonna, definizione in colonne:
         try:
@@ -396,6 +447,13 @@ def _migra_colonne(db):
                 db.commit()
         except Exception as e:
             log.warning('Migrazione colonna %s.%s fallita: %s', tabella, colonna, e)
+
+    # Seed dei flag e derivazione dei parametri: dopo le ALTER, perche'
+    # inseriscono e leggono le colonne appena aggiunte.
+    _inserisci_flag_default(db)
+    _migra_gruppi_su_fasce(db)
+    _ricalcola_parametri_fasce(db)
+    _crea_indice_fascia_unica(db)
 
     # Rinomina peso_solver → peso_priorita_solver
     for tabella in ('preset_turni', 'calendario_turni'):
@@ -411,81 +469,225 @@ def _migra_colonne(db):
 
 def _inserisci_flag_default(db):
     """
-    Inserisce i flag globali default se non esistono, con ore/peso.
-    Struttura: flag lavorativi (diurno→figli, notturno, guardia_24h)
-    e flag assenza (ferie, agg, malattia, riposo, permesso, legge) come root.
+    Inserisce i flag globali default se non esistono.
+
+    Struttura: i concetti root nascosti (turno_tipo, diurno, notturno,
+    guardia_24h), le fasce orarie come loro figlie con gli orari concreti,
+    e i flag assenza come root.
+
+    Durate, ore e peso non si scrivono qui: li deriva dagli orari
+    _ricalcola_parametri_fasce().
     """
     try:
-        # Flag lavorativi root
-        roots_lav = [
-            ('diurno',      None, 'Turno diurno generico',   1, None),
-            ('notturno',    None, 'Turno notturno',           2, 8.0),
-            ('guardia_24h', None, 'Guardia 24 ore',           3, 24.0),
-        ]
-        for nome, parent, desc, peso, ore in roots_lav:
+        for nome, descrizione, netta, pausa in CONCETTI_ROOT:
             db.execute(
                 "INSERT OR IGNORE INTO flag_turno "
-                "(nome, parent_id, descrizione, peso_turno, ore_turno) "
-                "VALUES (?,?,?,?,?)",
-                (nome, parent, desc, peso, ore)
+                "(nome, parent_id, descrizione, durata_netta_minuti, "
+                " pausa_minuti, mostra_in_struttura, tipo) "
+                "VALUES (?, NULL, ?, ?, ?, 0, 'lavorativo')",
+                (nome, descrizione, netta, pausa)
             )
-        db.commit()
 
-        # Aggiorna peso/ore sui flag root lavorativi esistenti
-        try:
-            cols = [
-                r[1] for r in
-                db.execute('PRAGMA table_info(flag_turno)').fetchall()
-            ]
-            if 'peso_turno' in cols:
-                for nome, _, _, peso, ore in roots_lav:
-                    if peso is not None:
-                        db.execute(
-                            "UPDATE flag_turno SET peso_turno=?, ore_turno=? "
-                            "WHERE nome=? AND peso_turno IS NULL",
-                            (peso, ore, nome)
-                        )
-                db.commit()
-        except Exception:
-            pass
-
-        # Flag assenza (root, senza parent)
-        flag_assenza = [
-            ('ferie',    'Ferie'),
-            ('agg',      'Aggiornamento'),
-            ('malattia', 'Malattia'),
-            ('riposo',   'Riposo'),
-            ('permesso', 'Permesso'),
-            ('legge',    'Legge'),
-        ]
-        for nome, desc in flag_assenza:
+        for nome, descrizione in FLAG_ASSENZA:
             db.execute(
                 "INSERT OR IGNORE INTO flag_turno "
-                "(nome, parent_id, descrizione) VALUES (?,NULL,?)",
-                (nome, desc)
+                "(nome, parent_id, descrizione, mostra_in_struttura, tipo) "
+                "VALUES (?, NULL, ?, 0, 'assenza')",
+                (nome, descrizione)
             )
 
-        # Figli di diurno
-        figli_d = [
-            ('mattina',     'Turno mattina',      1),
-            ('pomeriggio',  'Turno pomeriggio',   1),
-            ('lunga',       'Turno lungo diurno',  1),
-        ]
-        d = db.execute(
-            "SELECT id FROM flag_turno WHERE nome='diurno'"
-        ).fetchone()
-        if d:
-            for nome, desc, peso in figli_d:
-                db.execute(
-                    "INSERT OR IGNORE INTO flag_turno "
-                    "(nome, parent_id, descrizione, peso_turno) "
-                    "VALUES (?,?,?,?)",
-                    (nome, d[0], desc, peso)
-                )
+        for nome, padre, descrizione, inizio, fine, pausa in FASCE_DEFAULT:
+            db.execute(
+                "INSERT OR IGNORE INTO flag_turno "
+                "(nome, parent_id, descrizione, orario_inizio, orario_fine, "
+                " pausa_minuti, tipo) "
+                "VALUES (?, (SELECT id FROM flag_turno WHERE nome = ?), "
+                "        ?, ?, ?, ?, 'lavorativo')",
+                (nome, padre, descrizione, inizio, fine, pausa)
+            )
+
+        # I concetti root portano il concetto, non gli orari: ai gruppi si
+        # agganciano soltanto le fasce.
+        segnaposto = ','.join('?' * len(CONCETTI_ROOT))
+        db.execute(
+            "UPDATE flag_turno SET mostra_in_struttura = 0 "
+            f"WHERE nome IN ({segnaposto})",
+            tuple(nome for nome, _, _, _ in CONCETTI_ROOT)
+        )
 
         db.commit()
     except Exception as e:
+        db.rollback()
         log.warning('Inserimento flag default fallito: %s', e)
+
+    _applica_orari_default_alle_fasce(db)
+
+
+def _applica_orari_default_alle_fasce(db):
+    """
+    Assegna gli orari default alle fasce che ancora non ne hanno.
+
+    Serve ai tenant creati prima delle fasce orarie: mattina, pomeriggio e
+    lunga esistono gia', quindi l'INSERT OR IGNORE del seed non le tocca e
+    resterebbero senza orari, cioe' senza ore ne' peso derivati.
+
+    Non sovrascrive orari gia' impostati: se l'amministratore ha
+    personalizzato una fascia, resta com'e'.
+    """
+    for nome, _, _, inizio, fine, pausa in FASCE_DEFAULT:
+        try:
+            aggiornate = db.execute(
+                "UPDATE flag_turno "
+                "SET orario_inizio = ?, orario_fine = ?, pausa_minuti = ? "
+                "WHERE nome = ? "
+                "  AND orario_inizio IS NULL AND orario_fine IS NULL",
+                (inizio, fine, pausa, nome)
+            ).rowcount
+            db.commit()
+
+            if aggiornate:
+                log.info(
+                    "Fascia '%s': applicati gli orari default %s-%s",
+                    nome, inizio, fine
+                )
+        except Exception as e:
+            db.rollback()
+            log.warning("Orari default per la fascia '%s' falliti: %s", nome, e)
+
+
+def _migra_gruppi_su_fasce(db):
+    """
+    Sposta sui rispettivi figli i gruppi agganciati a un concetto root.
+
+    Prima delle fasce orarie un gruppo si agganciava direttamente al concetto
+    (flag 'notturno'). I concetti ora sono nascosti e senza orari, quindi un
+    gruppo rimasto appeso li' non avrebbe piu' ne' ore ne' peso.
+
+    Non tocca gli snapshot in calendario_turni: sono congelati per
+    definizione, e riscriverli cambierebbe le ore di calendari gia' chiusi.
+    Il riconoscimento delle notti sugli snapshot vecchi resta garantito dal
+    fatto che il concetto root matcha se stesso (fasce_orarie.discende_da).
+    """
+    for nome_root, nome_fascia in MIGRAZIONE_ROOT_SU_FASCIA.items():
+        try:
+            # Il NOT EXISTS evita di creare due gruppi della stessa fascia
+            # nella stessa struttura: quei casi restano da sanare a mano.
+            spostati = db.execute(
+                "UPDATE gruppi SET flag_id = "
+                "    (SELECT id FROM flag_turno WHERE nome = ?) "
+                "WHERE flag_id = (SELECT id FROM flag_turno WHERE nome = ?) "
+                "  AND NOT EXISTS ("
+                "      SELECT 1 FROM gruppi g2 "
+                "      WHERE g2.sovragruppo_id = gruppi.sovragruppo_id "
+                "        AND g2.flag_id = "
+                "            (SELECT id FROM flag_turno WHERE nome = ?)"
+                "  )",
+                (nome_fascia, nome_root, nome_fascia)
+            ).rowcount
+            db.commit()
+
+            if spostati:
+                log.info(
+                    "Migrati %d gruppi dal concetto '%s' alla fascia '%s'",
+                    spostati, nome_root, nome_fascia
+                )
+        except Exception as e:
+            db.rollback()
+            log.warning(
+                "Migrazione gruppi da '%s' a '%s' fallita: %s",
+                nome_root, nome_fascia, e
+            )
+
+
+def _ricalcola_parametri_fasce(db):
+    """
+    Ricalcola durate, ore e peso di ogni fascia a partire da orari e pausa.
+
+    Idempotente e auto-riparante: i campi derivati non si scrivono mai a
+    mano, quindi ricalcolarli a ogni avvio riallinea eventuali divergenze.
+
+    Lascia intatti i flag privi sia di orari sia di durata netta — i concetti
+    root diversi da turno_tipo e i flag assenza — perche' li' un ricalcolo
+    azzererebbe le ore inserite a mano prima delle fasce orarie.
+    """
+    try:
+        flag = [dict(r) for r in db.execute(
+            "SELECT id, nome, orario_inizio, orario_fine, pausa_minuti, "
+            "durata_netta_minuti FROM flag_turno"
+        ).fetchall()]
+    except Exception as e:
+        log.warning('Lettura flag per il ricalcolo fasce fallita: %s', e)
+        return
+
+    netta_turno_tipo = next(
+        (f['durata_netta_minuti'] for f in flag if f['nome'] == NOME_TURNO_TIPO),
+        None
+    ) or DURATA_TURNO_TIPO_DEFAULT_MINUTI
+
+    try:
+        for fascia in flag:
+            try:
+                derivati = ricalcola_parametri(fascia, netta_turno_tipo)
+            except FormatoOrarioNonValido as e:
+                log.warning(
+                    "Fascia '%s': orari non validi, parametri non ricalcolati "
+                    "(%s)", fascia['nome'], e
+                )
+                continue
+
+            if derivati is None:
+                continue
+
+            db.execute(
+                "UPDATE flag_turno SET durata_netta_minuti = ?, "
+                "durata_totale_minuti = ?, ore_turno = ?, peso_turno = ? "
+                "WHERE id = ?",
+                (derivati['durata_netta_minuti'], derivati['durata_totale_minuti'],
+                 derivati['ore_turno'], derivati['peso_turno'], fascia['id'])
+            )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log.warning('Ricalcolo parametri fasce fallito: %s', e)
+
+
+def _crea_indice_fascia_unica(db):
+    """
+    Impone che una fascia oraria esista una volta sola per struttura.
+
+    Il gruppo E' l'insieme dei turni di una fascia dentro un sovragruppo:
+    definire due volte la mattina dello stesso reparto non ha significato.
+
+    Se il tenant ha gia' duplicati l'indice non e' creabile: li registra nel
+    log e prosegue, perche' quale gruppo tenere e' una decisione dell'utente.
+    """
+    try:
+        duplicati = db.execute(
+            "SELECT sovragruppo_id, flag_id, COUNT(*) AS quanti FROM gruppi "
+            "WHERE flag_id IS NOT NULL "
+            "GROUP BY sovragruppo_id, flag_id HAVING quanti > 1"
+        ).fetchall()
+    except Exception as e:
+        log.warning('Verifica duplicati fascia per struttura fallita: %s', e)
+        return
+
+    if duplicati:
+        log.warning(
+            'Vincolo fascia unica per struttura non applicato: %d coppie '
+            '(sovragruppo, fascia) duplicate da sanare a mano', len(duplicati)
+        )
+        return
+
+    try:
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_gruppi_sovragruppo_fascia "
+            "ON gruppi(sovragruppo_id, flag_id) WHERE flag_id IS NOT NULL"
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log.warning('Creazione indice fascia unica fallita: %s', e)
 
 
 def _migra_flag_e_regole(db):
