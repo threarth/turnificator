@@ -11,6 +11,7 @@
   import DeleteButton from '$lib/admin/DeleteButton.svelte';
   import FlagRow from '$lib/admin/FlagRow.svelte';
   import FlagForm from '$lib/admin/FlagForm.svelte';
+  import ProceduraGuidata from '$lib/admin/ProceduraGuidata.svelte';
   import { decToHm, hmToDec } from '$lib/admin/durate.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
   import EditableTable from '$lib/admin/EditableTable.svelte';
@@ -81,6 +82,13 @@
   let activeAddGruppo = null;          // sgId
   let activeAddTurno  = null;          // 'sgId:gId' stringa
   let nuovoSg     = { nome: '', sigla: '', ambito: '' };
+
+  // Procedura guidata: crea sempre un preset nuovo, non tocca gli altri.
+  let wizardAttivo = false;
+
+  // Come l'utente chiama le sue strutture — sovragruppo e' un termine
+  // interno che non deve arrivare a chi configura il sistema.
+  let etichettaStruttura = { singolare: 'Sovragruppo', plurale: 'Sovragruppi' };
   let nuovoGruppo = { nome: '', sigla: '', flag_id: null };
   let nuovoTurno  = { nome: '', tipiQualitativoIds: [] };
   let showAddSg   = false;
@@ -253,6 +261,12 @@
     }
     const cfg = await adminApi.getConfig();
     config = cfg.config ?? {};
+    if (config['etichetta_struttura']) {
+      etichettaStruttura = {
+        singolare: config['etichetta_struttura'],
+        plurale: config['etichetta_strutture'] || config['etichetta_struttura'],
+      };
+    }
     try { conteggiConfig = JSON.parse(config['conteggi_context'] || '[]'); } catch { conteggiConfig = []; }
     // Vincoli solver
     const [rvg, rvs] = await Promise.all([
@@ -913,6 +927,17 @@
       setMsg('stru', 'Preset creato.');
     } else setMsg('stru', r.errore, false);
   }
+  // La procedura guidata ha creato il preset: lo si apre nell'editor
+  // normale, dove l'utente esperto prosegue a mano.
+  async function wizardCompletato(presetId, etichetta) {
+    etichettaStruttura = etichetta;
+    wizardAttivo = false;
+    presets = (await adminApi.getPresets()).presets ?? [];
+    const creato = presets.find(p => p.id === presetId);
+    if (creato) await apriPreset(creato);
+    setMsg('stru', 'Struttura turni creata. Puoi rifinirla qui.');
+  }
+
   async function apriPreset(p) {
     const r = await adminApi.getStrutturaPreset(p.id);
     editPreset = { id: p.id, nome: p.nome, struttura: r.struttura ?? [] };
@@ -2716,7 +2741,16 @@
   {:else if tab === 'struttura'}
     {#if msgStruttura}<div class="alert py-2 small {msgStruttura.startsWith('✓')?'alert-success':'alert-danger'}">{msgStruttura}</div>{/if}
 
-    {#if !editPreset}
+    {#if wizardAttivo}
+
+      <ProceduraGuidata fasce={flagTurno} etichetta={etichettaStruttura}
+                        oncompletata={wizardCompletato}
+                        onannulla={() => wizardAttivo = false}
+                        onfasceaggiornate={async () => {
+                          flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
+                        }} />
+
+    {:else if !editPreset}
 
       <!-- ═══ Sezione Preset Struttura ═══ -->
       <h6 class="text-muted text-uppercase mb-3">Preset struttura turni</h6>
@@ -2730,6 +2764,14 @@
         <button class="btn btn-primary btn-sm" on:click={creaPreset}>
           <i class="bi bi-plus-lg me-1"></i>Crea preset
         </button>
+        <span class="text-muted small">oppure</span>
+        <button class="btn btn-outline-primary btn-sm" on:click={() => wizardAttivo = true}>
+          <i class="bi bi-magic me-1"></i>Procedura guidata
+        </button>
+      </div>
+      <div class="form-text small mb-3" style="max-width:540px">
+        La procedura guidata accompagna passo per passo alla creazione di una
+        struttura turni nuova, senza toccare quelle esistenti.
       </div>
       {/if}
 
@@ -3182,7 +3224,8 @@
         {#if showAddSg}
           <div class="stru-add-sg d-flex align-items-center gap-2 px-2 py-2 border-top">
             <i class="bi bi-collection text-primary"></i>
-            <input class="form-control form-control-sm" use:autowidth use:focusOnMount placeholder="Nome sovragruppo"
+            <input class="form-control form-control-sm" use:autowidth use:focusOnMount
+                   placeholder="Nome {etichettaStruttura.singolare.toLowerCase()}"
                    bind:value={nuovoSg.nome}
                    on:input={() => { if (autoSigla) nuovoSg.sigla = toSigla(nuovoSg.nome); }}
                    on:keydown={e => e.key === 'Enter' && addSg()} />
@@ -3204,7 +3247,7 @@
         {:else}
           <div class="px-2 py-2 border-top">
             <button class="btn btn-outline-primary btn-sm" on:click={() => { showAddSg=true; nuovoSg={nome:'',sigla:'',ambito:''}; }}>
-              <i class="bi bi-plus-lg me-1"></i>Aggiungi sovragruppo
+              <i class="bi bi-plus-lg me-1"></i>Aggiungi {etichettaStruttura.singolare.toLowerCase()}
             </button>
           </div>
         {/if}

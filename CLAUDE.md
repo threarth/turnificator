@@ -45,6 +45,9 @@ npm run dev
 
 # Build SPA → outputs to ../static/ (served by Flask)
 npm run build
+
+# Test della logica pura estratta dai componenti (runner incluso in Node)
+npm test
 ```
 
 The frontend build output lands in `static/` at the project root, which Flask serves. In production, only Flask needs to run.

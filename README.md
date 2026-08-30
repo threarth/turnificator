@@ -364,12 +364,16 @@ Componenti condivisi in `src/lib/`: `GridPreview`, `StyleContextMenu`,
 ## Test
 
 ```bash
-pytest              # 21 test
+pytest                        # backend — 77 test
+cd frontend && npm test       # logica frontend — 9 test
 ```
 
 `tests/conftest.py` costruisce master DB e tenant di prova in memoria, con
 account sintetici (`admin_t`, `manager_t`, `basic_t`, `escluso_t`, `master_t`).
 Non tocca i database reali.
+
+I test del frontend girano con il runner incluso in Node (`node --test`), senza
+dipendenze aggiuntive, e coprono la logica pura estratta dai componenti.
 
 ---
 
