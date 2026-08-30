@@ -15,6 +15,11 @@ Contenuto del JSON config_snapshot:
                  ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura,
                  orario_inizio, orario_fine, pausa_minuti,
                  durata_netta_minuti, durata_totale_minuti, tipo}]
+- tipi_qualitativo: [{id, nome, descrizione, carico_lavoro}]
+- tipi_richiesta: [{id, sigla, descrizione, tipo, counting_flag, flag_id,
+                    ore_default, ordine}]
+- regole_conflitto: le regole attive, nella forma di validatori.snapshot_regole()
+- conteggi_context: [{id, label, flag_nome, giorno_settimana, negato, attivo}]
 
 Nota: esclusioni_manuali e celle_bloccate sono per-calendario (campi JSON in
 tabella calendari), non nella config globale → non servono nello snapshot.
@@ -22,7 +27,9 @@ Solver e optimizer li leggono direttamente dal record calendario.
 """
 
 import json
+
 from app.db import query_all, query_one
+from app.services.validatori import snapshot_regole
 
 # Valori di default per l'appearance di un preset struttura
 APPEARANCE_DEFAULT = {
@@ -34,6 +41,23 @@ APPEARANCE_DEFAULT = {
     'bordo_esterno_colore':   '#adb5bd',
     'bordo_esterno_spessore': 2,
 }
+
+
+def _conteggi_context():
+    """
+    I conteggi del context menu, che vivono come JSON in `config`.
+
+    Returns:
+        list: elenco dei conteggi, vuoto se non configurati o illeggibili.
+    """
+    riga = query_one("SELECT valore FROM config WHERE chiave = 'conteggi_context'")
+    if not (riga and riga['valore']):
+        return []
+
+    try:
+        return json.loads(riga['valore'])
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 def crea_config_snapshot(preset_id=None):
@@ -96,6 +120,22 @@ def crea_config_snapshot(preset_id=None):
                 "FROM flag_turno"
             )
         ],
+        'tipi_qualitativo': [
+            dict(r) for r in query_all(
+                "SELECT id, nome, descrizione, carico_lavoro FROM tipi_qualitativo"
+            )
+        ],
+        'tipi_richiesta': [
+            dict(r) for r in query_all(
+                "SELECT id, sigla, descrizione, tipo, counting_flag, flag_id, "
+                "ore_default, ordine FROM tipi_richiesta"
+            )
+        ],
+        # Le regole hanno la forma che validatori sa gia' rileggere: qui si
+        # riusa quella, invece di duplicarne il formato. snapshot_regole()
+        # serializza gia' per la colonna regole_snapshot, quindi va riletta.
+        'regole_conflitto': json.loads(snapshot_regole()),
+        'conteggi_context': _conteggi_context(),
     }
 
     # Dati specifici del preset
@@ -282,6 +322,70 @@ def snap_esclusioni_turno(snap):
         for e in ecc:
             cache[uid]['eccezioni'].add(e)
     return cache
+
+
+def snap_tipi_qualitativo(snap):
+    """
+    I tipi qualitativi congelati, come dict id→riga.
+
+    Args:
+        snap (dict|None): snapshot del calendario.
+
+    Returns:
+        dict: {id → {nome, descrizione, carico_lavoro}}, vuoto senza snapshot.
+    """
+    if not snap:
+        return {}
+    return {r['id']: r for r in snap.get('tipi_qualitativo', [])}
+
+
+def snap_tipi_richiesta(snap):
+    """
+    I tipi richiesta congelati, come dict id→riga.
+
+    Serve a rileggere un desiderata con il significato che aveva quando il
+    calendario e' stato creato: se poi qualcuno cambia `counting_flag` o il
+    flag associato, le ore gia' calcolate non devono cambiare sotto i piedi.
+
+    Args:
+        snap (dict|None): snapshot del calendario.
+
+    Returns:
+        dict: {id → riga tipi_richiesta}, vuoto senza snapshot.
+    """
+    if not snap:
+        return {}
+    return {r['id']: r for r in snap.get('tipi_richiesta', [])}
+
+
+def snap_conteggi_context(snap):
+    """
+    I conteggi del context menu congelati.
+
+    Args:
+        snap (dict|None): snapshot del calendario.
+
+    Returns:
+        list: elenco dei conteggi, vuoto senza snapshot.
+    """
+    if not snap:
+        return []
+    return snap.get('conteggi_context', [])
+
+
+def snap_regole_conflitto(snap):
+    """
+    Le regole di conflitto congelate, gia' filtrate sulle attive.
+
+    Args:
+        snap (dict|None): snapshot del calendario.
+
+    Returns:
+        list: regole attive, vuoto senza snapshot.
+    """
+    if not snap:
+        return []
+    return [r for r in snap.get('regole_conflitto', []) if r.get('is_active', 1)]
 
 
 def snap_flag_map(snap):
