@@ -75,7 +75,8 @@ from app.auth import require_role, get_current_user, hash_password
 from app.db import query_one, query_all, execute_write, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
 from app.services.fasce_orarie import (
-    PAUSA_DEFAULT_MINUTI, FormatoOrarioNonValido, parse_orario, ricalcola_tutte
+    NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
+    FormatoOrarioNonValido, parse_orario, ricalcola_tutte
 )
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -245,12 +246,13 @@ def crea_flag_turno():
 
     cur = execute_write(
         "INSERT INTO flag_turno (nome, parent_id, descrizione, "
-        "orario_inizio, orario_fine, pausa_minuti, "
+        "orario_inizio, orario_fine, pausa_minuti, durata_netta_minuti, "
         "peso_turno, ore_turno, ore_primo_giorno, ore_ultimo_giorno, "
         "mostra_in_struttura, tipo) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (nome, parent_id, descrizione or None,
          orari['orario_inizio'], orari['orario_fine'], orari['pausa_minuti'],
+         dati.get('durata_netta_minuti'),
          dati.get('peso_turno'), dati.get('ore_turno'),
          dati.get('ore_primo_giorno'), dati.get('ore_ultimo_giorno'),
          _visibilita_in_struttura(dati, tipo), tipo)
@@ -275,6 +277,15 @@ def modifica_flag_turno(fid):
 
     nuovo_nome = (dati.get('nome') or '').strip().lower() or f['nome']
     if nuovo_nome != f['nome']:
+        # Il ricalcolo dei pesi cerca il turno tipo per nome: rinominarlo
+        # toglierebbe il riferimento a ogni fascia, senza dirlo.
+        if f['nome'] == NOME_TURNO_TIPO:
+            return jsonify({
+                'ok': False,
+                'errore': 'Il turno tipo non si rinomina: serve solo a misurare '
+                          'il peso degli altri turni. Puoi cambiarne la durata.'
+            }), 409
+
         dup = query_one("SELECT id FROM flag_turno WHERE nome=? AND id!=?", (nuovo_nome, fid))
         if dup:
             return jsonify({'ok': False, 'errore': f'Nome "{nuovo_nome}" già in uso.'}), 409
@@ -285,7 +296,7 @@ def modifica_flag_turno(fid):
 
     execute_write(
         "UPDATE flag_turno SET nome=?, descrizione=?, parent_id=?, "
-        "orario_inizio=?, orario_fine=?, pausa_minuti=?, "
+        "orario_inizio=?, orario_fine=?, pausa_minuti=?, durata_netta_minuti=?, "
         "peso_turno=?, ore_turno=?, ore_primo_giorno=?, ore_ultimo_giorno=?, "
         "mostra_in_struttura=?, tipo=? WHERE id=?",
         (
@@ -293,6 +304,7 @@ def modifica_flag_turno(fid):
             dati.get('descrizione', f['descrizione']),
             dati.get('parent_id', f['parent_id']),
             orari['orario_inizio'], orari['orario_fine'], orari['pausa_minuti'],
+            dati.get('durata_netta_minuti', f.get('durata_netta_minuti')),
             dati.get('peso_turno', f.get('peso_turno')),
             dati.get('ore_turno', f.get('ore_turno')),
             dati.get('ore_primo_giorno', f.get('ore_primo_giorno')),
@@ -354,7 +366,23 @@ def _propaga_rinomina_flag(fid, vecchio_nome, nuovo_nome):
 @bp.route('/flag-turno/<int:fid>', methods=['DELETE'])
 @require_role('admin')
 def elimina_flag_turno(fid):
-    """Elimina un flag. Con cascade=true elimina anche i figli (se non hanno dipendenze)."""
+    """
+    Elimina un flag. Con cascade=true elimina anche i figli (se non hanno
+    dipendenze).
+
+    Il turno tipo fa eccezione: e' l'unita' di misura da cui si deriva il peso
+    di ogni fascia, quindi si puo' modificare nella durata ma non togliere.
+    Senza di lui i pesi perderebbero il riferimento.
+    """
+    da_eliminare = query_one("SELECT nome FROM flag_turno WHERE id=?", (fid,))
+    if da_eliminare and da_eliminare['nome'] == NOME_TURNO_TIPO:
+        return jsonify({
+            'ok': False,
+            'errore': 'Il turno tipo non si elimina: è l\'unità di misura da '
+                      'cui si ricava il peso di ogni fascia. Puoi cambiarne '
+                      'la durata.'
+        }), 409
+
     dati = request.get_json(silent=True) or {}
     cascade = dati.get('cascade', False)
 

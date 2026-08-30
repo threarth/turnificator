@@ -178,6 +178,67 @@ def test_pausa_non_dichiarata_prende_il_default(client, admin_token, auth):
 
 
 # ---------------------------------------------------------------------------
+# Il turno tipo: si modifica, non si elimina
+# ---------------------------------------------------------------------------
+
+# Unita' di misura del peso, dichiarata nel seed a 6h20.
+NOME_TURNO_TIPO = 'turno_tipo'
+
+
+def test_turno_tipo_non_si_elimina(client, admin_token, auth):
+    """Senza il metro, i pesi di tutte le fasce perderebbero il riferimento."""
+    turno_tipo = _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO)
+
+    rv = client.delete(f"/api/admin/flag-turno/{turno_tipo['id']}", headers=auth(admin_token))
+    assert rv.status_code == 409
+    assert 'non si elimina' in rv.get_json()['errore']
+
+    assert _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO) is not None
+
+
+def test_turno_tipo_non_si_rinomina(client, admin_token, auth):
+    """Il ricalcolo lo cerca per nome: rinominarlo scollegherebbe i pesi."""
+    turno_tipo = _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO)
+
+    rv = client.put(f"/api/admin/flag-turno/{turno_tipo['id']}",
+                    json={'nome': 'metro'}, headers=auth(admin_token))
+    assert rv.status_code == 409
+    assert 'non si rinomina' in rv.get_json()['errore']
+
+    assert _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO) is not None
+    assert _flag_per_nome(client, admin_token, auth, 'metro') is None
+
+
+def test_turno_tipo_accetta_le_altre_modifiche(client, admin_token, auth):
+    """Il blocco riguarda il nome, non l'intera riga."""
+    turno_tipo = _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO)
+
+    rv = client.put(f"/api/admin/flag-turno/{turno_tipo['id']}",
+                    json={'nome': NOME_TURNO_TIPO, 'descrizione': 'Metro dei pesi'},
+                    headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    assert _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO)['descrizione'] == 'Metro dei pesi'
+
+
+def test_durata_del_turno_tipo_riscala_tutti_i_pesi(client, admin_token, auth):
+    """Cambiare il metro cambia il peso di ogni fascia, senza toccarle."""
+    turno_tipo = _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO)
+    assert _flag_per_nome(client, admin_token, auth, FASCIA_MATTINA)['peso_turno'] == 1.0
+
+    rv = client.put(f"/api/admin/flag-turno/{turno_tipo['id']}",
+                    json={'durata_netta_minuti': 420}, headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    assert _flag_per_nome(client, admin_token, auth, NOME_TURNO_TIPO)['durata_netta_minuti'] == 420
+
+    # La mattina non e' cambiata: sono 380 minuti su un metro piu' lungo.
+    mattina = _flag_per_nome(client, admin_token, auth, FASCIA_MATTINA)
+    assert mattina['durata_netta_minuti'] == 380
+    assert mattina['peso_turno'] == pytest.approx(380 / 420)
+
+
+# ---------------------------------------------------------------------------
 # Le assenze non entrano nella struttura turni
 # ---------------------------------------------------------------------------
 

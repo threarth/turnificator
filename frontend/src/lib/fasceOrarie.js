@@ -12,6 +12,9 @@
  */
 
 /** Nomi dei concetti root: l'unico riferimento stabile per il codice. */
+// Non classifica turni: e' l'unita' di misura da cui si deriva il peso.
+export const NOME_TURNO_TIPO = 'turno_tipo';
+
 export const NOME_ROOT_DIURNO = 'diurno';
 export const NOME_ROOT_NOTTURNO = 'notturno';
 export const NOME_ROOT_GUARDIA = 'guardia_24h';

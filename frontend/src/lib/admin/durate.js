@@ -59,3 +59,19 @@ export function minToHm(minuti) {
 
     return `${ore}:${String(totale % MINUTI_PER_ORA).padStart(CIFRE_MINUTI, '0')}`;
 }
+
+/**
+ * 'h:mm' → minuti interi.
+ *
+ * @param {string|null} hm — durata come 'h:mm'.
+ * @returns {number|null} minuti, null se il campo e' vuoto.
+ */
+export function hmToMin(hm) {
+    if (!hm || !hm.trim()) return null;
+
+    const parti = hm.trim().split(':');
+    const ore = parseInt(parti[0]) || 0;
+    const minuti = parseInt(parti[1]) || 0;
+
+    return ore * MINUTI_PER_ORA + minuti;
+}

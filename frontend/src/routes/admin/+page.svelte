@@ -13,7 +13,8 @@
   import FlagForm from '$lib/admin/FlagForm.svelte';
   import ProceduraGuidata from '$lib/admin/ProceduraGuidata.svelte';
   import { etichettaStruttura, leggiEtichettaDaConfig } from '$lib/etichette.js';
-  import { decToHm, hmToDec } from '$lib/admin/durate.js';
+  import { decToHm, hmToDec, hmToMin, minToHm } from '$lib/admin/durate.js';
+  import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
   import EditableTable from '$lib/admin/EditableTable.svelte';
   import StyleContextMenu from '$lib/StyleContextMenu.svelte';
@@ -126,6 +127,7 @@
   // ── Flag turno (globali) ──────────────────────────────────────
   // Pausa obbligatoria di default, in minuti: si somma alla durata netta.
   const PAUSA_DEFAULT_MINUTI = 10;
+
 
   let flagTurno       = [];
   // Tipo del flag in creazione ('lavorativo' | 'assenza'), null se il form
@@ -766,10 +768,12 @@
   function payloadFlag(flag) {
     const payload = {
       ...flag,
+      durata_netta_minuti: hmToMin(flag._netta),
       ore_turno: hmToDec(flag._ore_turno),
       ore_primo_giorno: hmToDec(flag._ore_primo),
       ore_ultimo_giorno: hmToDec(flag._ore_ultimo),
     };
+    delete payload._netta;
     delete payload._ore_turno; delete payload._ore_primo; delete payload._ore_ultimo;
     return payload;
   }
@@ -799,6 +803,7 @@
       mostra_in_struttura: !!f.mostra_in_struttura,
       orario_inizio: f.orario_inizio || '',
       orario_fine: f.orario_fine || '',
+      _netta: minToHm(f.durata_netta_minuti),
       _ore_turno: decToHm(f.ore_turno),
       _ore_primo: decToHm(f.ore_primo_giorno),
       _ore_ultimo: decToHm(f.ore_ultimo_giorno),
@@ -879,6 +884,17 @@
   $: flagFigli  = (parentId) => flagTurno.filter(f => f.parent_id === parentId);
   // Flag ordinati padre→figli per i <select>
   $: flagOrdinati = flagRadice.flatMap(r => [r, ...flagTurno.filter(f => f.parent_id === r.id)]);
+
+  // Una regola tipo_vs_tipo confronta due turni gia' assegnati: le assenze
+  // in griglia non compaiono mai, e il turno tipo e' solo l'unita' di misura
+  // del peso. Offrirli sarebbe offrire voci che non scatteranno mai.
+  $: fasceRegolaConflitto = flagOrdinati.filter(
+    f => (f.tipo || 'lavorativo') !== 'assenza' && f.nome !== NOME_TURNO_TIPO
+  );
+
+  // L'intero vocabolario meno il turno tipo, che non classifica nulla:
+  // e' l'elenco di cio' che un lavoratore puo' avere in una giornata.
+  $: fasceEAssenze = flagOrdinati.filter(f => f.nome !== NOME_TURNO_TIPO);
 
   // ── Stili regole conflitto ───────────────────────────────────
   async function salvaStiliRegole() {
@@ -2264,9 +2280,9 @@
             </label>
             <input class="form-control form-control-sm" type="number" step="0.5" placeholder="Ore" bind:value={nuovoTipoRich.ore_default} style="width:60px" />
             <input class="form-control form-control-sm" type="number" placeholder="Ord." bind:value={nuovoTipoRich.ordine} style="width:55px" />
-            <select class="form-select form-select-sm" style="width:110px" bind:value={nuovoTipoRich.flag_id}>
-              <option value={null}>— flag —</option>
-              {#each flagOrdinati as f}
+            <select class="form-select form-select-sm" style="width:130px" bind:value={nuovoTipoRich.flag_id}>
+              <option value={null}>— fascia o assenza —</option>
+              {#each fasceEAssenze as f}
                 <option value={f.id}>{f.parent_nome ? f.parent_nome + '→' : ''}{f.nome}</option>
               {/each}
             </select>
@@ -2284,8 +2300,8 @@
               badgeClass: (v) => v==='lavorativo' ? 'bg-primary' : 'bg-warning text-dark' },
             { key: 'counting_flag', label: 'Conta', type: 'checkbox', width: '50px' },
             { key: 'ore_default', label: 'Ore', type: 'number', step: 0.5, width: '55px', viewClass: 'small' },
-            { key: 'flag_id', label: 'Flag', type: 'select', width: '100px',
-              options: [{value:null,label:'—'}, ...flagOrdinati.map(f => ({value:f.id, label:(f.parent_nome ? f.parent_nome+'→':'')+f.nome}))],
+            { key: 'flag_id', label: 'Fascia o assenza', type: 'select', width: '130px',
+              options: [{value:null,label:'—'}, ...fasceEAssenze.map(f => ({value:f.id, label:(f.parent_nome ? f.parent_nome+'→':'')+f.nome}))],
               formatHtml: (v) => `<span class="badge bg-secondary small">${flagLabel(v, flagTurno)}</span>` },
             { key: 'ordine', label: 'Ord.', type: 'number', width: '50px' },
           ]}
@@ -2326,19 +2342,19 @@
             </div>
             {#if nuovaRegola.tipo_regola === 'tipo_vs_tipo'}
               <div class="col-md-2">
-                <label class="form-label small">Flag A</label>
+                <label class="form-label small">Fascia oraria A</label>
                 <select class="form-select form-select-sm" bind:value={nuovaRegola.flag_a_id}>
                   <option value={null}>— qualsiasi —</option>
-                  {#each flagOrdinati as f}
+                  {#each fasceRegolaConflitto as f}
                     <option value={f.id}>{f.parent_nome ? f.parent_nome + '→' : ''}{f.nome}</option>
                   {/each}
                 </select>
               </div>
               <div class="col-md-2">
-                <label class="form-label small">Flag B</label>
+                <label class="form-label small">Fascia oraria B</label>
                 <select class="form-select form-select-sm" bind:value={nuovaRegola.flag_b_id}>
                   <option value={null}>— qualsiasi —</option>
-                  {#each flagOrdinati as f}
+                  {#each fasceRegolaConflitto as f}
                     <option value={f.id}>{f.parent_nome ? f.parent_nome + '→' : ''}{f.nome}</option>
                   {/each}
                 </select>
@@ -2382,7 +2398,7 @@
       <table class="table table-sm table-hover table-config table-config-fixed align-middle mb-0" style="font-size:.85rem">
         <thead>
           <tr>
-            <th style="width:130px">Nome</th><th style="width:110px">Tipo</th><th style="width:110px">Flag A</th><th style="width:110px">Flag B</th>
+            <th style="width:130px">Nome</th><th style="width:110px">Tipo</th><th style="width:120px">Fascia oraria A</th><th style="width:120px">Fascia oraria B</th>
             <th style="width:55px">Offset</th><th style="width:110px">Categoria</th><th style="width:45px">Sfondo</th><th style="width:45px">Testo</th><th style="width:50px">Blocca</th><th style="width:55px">Peso</th><th style="width:50px">Attiva</th><th style="width:60px"></th>
           </tr>
         </thead>
@@ -2400,23 +2416,23 @@
                 </td>
                 <td>
                   {#if editingRegola.tipo_regola === 'tipo_vs_tipo'}
-                    <select class="form-select form-select-sm" use:autoFocus={'flag_a_id'} style="width:110px" bind:value={editingRegola.flag_a_id}>
-                      <option value={null}>—</option>
-                      {#each flagOrdinati as f}
+                    <select class="form-select form-select-sm" use:autoFocus={'flag_a_id'} style="width:120px" bind:value={editingRegola.flag_a_id}>
+                      <option value={null}>qualsiasi</option>
+                      {#each fasceRegolaConflitto as f}
                         <option value={f.id}>{f.parent_nome ? f.parent_nome + '→' : ''}{f.nome}</option>
                       {/each}
                     </select>
-                  {:else}—{/if}
+                  {:else}<span class="text-muted small">qualsiasi</span>{/if}
                 </td>
                 <td>
                   {#if editingRegola.tipo_regola === 'tipo_vs_tipo'}
-                    <select class="form-select form-select-sm" use:autoFocus={'flag_b_id'} style="width:110px" bind:value={editingRegola.flag_b_id}>
-                      <option value={null}>—</option>
-                      {#each flagOrdinati as f}
+                    <select class="form-select form-select-sm" use:autoFocus={'flag_b_id'} style="width:120px" bind:value={editingRegola.flag_b_id}>
+                      <option value={null}>qualsiasi</option>
+                      {#each fasceRegolaConflitto as f}
                         <option value={f.id}>{f.parent_nome ? f.parent_nome + '→' : ''}{f.nome}</option>
                       {/each}
                     </select>
-                  {:else}—{/if}
+                  {:else}<span class="text-muted small">qualsiasi</span>{/if}
                 </td>
                 <td>
                   {#if editingRegola.tipo_regola === 'tipo_vs_tipo'}
@@ -2448,8 +2464,14 @@
               <tr class="editable-row {r.is_active ? '' : 'text-muted'}" on:click={e => startEditFromRow(e, () => editingRegola = {...r})}>
                 <td class="fw-semibold" data-field="nome">{r.nome}</td>
                 <td class="small" data-field="tipo_regola">{r.tipo_regola === 'tipo_vs_tipo' ? 'T vs T' : r.tipo_regola === 'desiderata_mismatch' ? 'Des.' : 'NW'}</td>
-                <td data-field="flag_a_id"><span class="badge bg-secondary">{@html flagLabel(r.flag_a_id, flagTurno)}</span></td>
-                <td data-field="flag_b_id"><span class="badge bg-secondary">{@html flagLabel(r.flag_b_id, flagTurno)}</span></td>
+                <td data-field="flag_a_id">
+                  {#if r.flag_a_id}<span class="badge bg-secondary">{@html flagLabel(r.flag_a_id, flagTurno)}</span>
+                  {:else}<span class="text-muted small">qualsiasi</span>{/if}
+                </td>
+                <td data-field="flag_b_id">
+                  {#if r.flag_b_id}<span class="badge bg-secondary">{@html flagLabel(r.flag_b_id, flagTurno)}</span>
+                  {:else}<span class="text-muted small">qualsiasi</span>{/if}
+                </td>
                 <td class="small" data-field="offset_giorni">{r.tipo_regola === 'tipo_vs_tipo' ? ((r.offset_giorni > 0 ? '+' : '') + r.offset_giorni) : '—'}</td>
                 <td data-field="categoria">
                   <span class="badge" style={regolaStyle(r)}>
@@ -2616,7 +2638,7 @@
                   <select class="form-select form-select-sm" style="width:150px"
                           bind:value={nuovoPresetOtt.ref_id}>
                     <option value={null}>— flag —</option>
-                    {#each flagTurno as f}
+                    {#each fasceEAssenze as f}
                       <option value={f.id}>{f.nome}</option>
                     {/each}
                   </select>
@@ -2669,7 +2691,7 @@
                     {#if p.tipo === 'per_flag'}
                       <select class="form-select form-select-sm" style="width:120px" bind:value={p.ref_id}>
                         <option value={null}>—</option>
-                        {#each flagTurno as f}
+                        {#each fasceEAssenze as f}
                           <option value={f.id}>{f.nome}</option>
                         {/each}
                       </select>
