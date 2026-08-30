@@ -21,7 +21,8 @@ import time
 DEBUG_ACTIVE = False
 
 from app.db import query_one, query_all, execute_write
-from app.services.validatori import valida_assegnazione, _flag_matcha, _get_flag_map
+from app.services.validatori import valida_assegnazione, _flag_matcha
+from app.services.fasce_orarie import carica_mappa_flag
 from app.services.history import aggiungi_step
 from app.services.config_snapshot import (
     carica_config_snapshot,
@@ -251,15 +252,29 @@ def _carica_esclusioni_utente():
     return esclusioni
 
 
-def _utente_escluso_per_flag(esclusioni_cache, user_id, flag_id):
-    """Verifica se l'utente e' escluso per il flag del turno (con risalita gerarchia)."""
+def _utente_escluso_per_flag(esclusioni_cache, user_id, flag_id, mappa_flag):
+    """
+    L'utente e' escluso dal flag del turno?
+
+    L'esclusione vale per discendenza: escludere un utente dal concetto
+    `notturno` lo esclude da ogni fascia che ne discende.
+
+    Args:
+        esclusioni_cache (dict): {user_id → set(flag_id esclusi)}.
+        user_id (int): lavoratore da verificare.
+        flag_id (int): flag del turno candidato.
+        mappa_flag (dict): gerarchia in vigore per il calendario.
+
+    Returns:
+        bool: True se il turno gli e' precluso.
+    """
     if user_id not in esclusioni_cache:
         return False
-    flags_esclusi = esclusioni_cache[user_id]
-    for fe in flags_esclusi:
-        if _flag_matcha(flag_id, fe):
-            return True
-    return False
+
+    return any(
+        _flag_matcha(flag_id, fe, mappa_flag)
+        for fe in esclusioni_cache[user_id]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +540,7 @@ def _costruisci_contesto(calendario_id, solo_vuote=True, solo_indispensabili=Fal
         giorni_esclusi_cache = snap_giorni_esclusi(config_snap)
     else:
         vincoli_g = _carica_vincoli_globali()
-        flag_map = _get_flag_map()
+        flag_map = carica_mappa_flag()
         vincoli_utente_cache = {}
         for u_temp in query_all(
             "SELECT id FROM users WHERE is_active=1 AND escluso_turni=0 AND role IN ('basic','manager','admin')"
@@ -663,7 +678,7 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
                 return True
             elif r.get('tipo_regola') == 'desiderata_mismatch':
                 if req_tipo == 'lavorativo' and des_ref.get('req_flag_nome') and flag_nome_nuovo:
-                    if not _flag_nome_matcha(flag_nome_nuovo, des_ref.get('req_flag_id')):
+                    if not _flag_nome_matcha(flag_nome_nuovo, des_ref.get('req_flag_id'), flag_map):
                         return True
 
     # tipo_vs_tipo offset=0 (stesso giorno)
@@ -672,11 +687,11 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
     for r in regole_0:
         for a in ass_oggi:
             flag_e = a.get('flag_nome')
-            if (_flag_nome_matcha(flag_nome_nuovo, r.get('flag_a_id'))
-                    and _flag_nome_matcha(flag_e, r.get('flag_b_id'))):
+            if (_flag_nome_matcha(flag_nome_nuovo, r.get('flag_a_id'), flag_map)
+                    and _flag_nome_matcha(flag_e, r.get('flag_b_id'), flag_map)):
                 return True
-            if (_flag_nome_matcha(flag_e, r.get('flag_a_id'))
-                    and _flag_nome_matcha(flag_nome_nuovo, r.get('flag_b_id'))):
+            if (_flag_nome_matcha(flag_e, r.get('flag_a_id'), flag_map)
+                    and _flag_nome_matcha(flag_nome_nuovo, r.get('flag_b_id'), flag_map)):
                 return True
 
     # tipo_vs_tipo offset=1 (oggi=A, domani=B) — turno nuovo oggi, esistente domani
@@ -685,8 +700,8 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
     for r in regole_1:
         for a in ass_domani:
             flag_e = a.get('flag_nome')
-            if (_flag_nome_matcha(flag_nome_nuovo, r.get('flag_a_id'))
-                    and _flag_nome_matcha(flag_e, r.get('flag_b_id'))):
+            if (_flag_nome_matcha(flag_nome_nuovo, r.get('flag_a_id'), flag_map)
+                    and _flag_nome_matcha(flag_e, r.get('flag_b_id'), flag_map)):
                 return True
 
     # Reverse offset=1: ieri=A, oggi(nuovo)=B
@@ -695,8 +710,8 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
         for r in regole_1:
             for a in ass_ieri:
                 flag_ieri = a.get('flag_nome')
-                if (_flag_nome_matcha(flag_ieri, r.get('flag_a_id'))
-                        and _flag_nome_matcha(flag_nome_nuovo, r.get('flag_b_id'))):
+                if (_flag_nome_matcha(flag_ieri, r.get('flag_a_id'), flag_map)
+                        and _flag_nome_matcha(flag_nome_nuovo, r.get('flag_b_id'), flag_map)):
                     return True
 
     return False
@@ -866,7 +881,7 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
                 continue
 
             # HARD: esclusioni per flag turno
-            if flag_id and _utente_escluso_per_flag(esclusioni_cache, uid, flag_id):
+            if flag_id and _utente_escluso_per_flag(esclusioni_cache, uid, flag_id, flag_map):
                 continue
 
             # HARD: esclusioni turno per preset (turno/gruppo/sovragruppo specifico)

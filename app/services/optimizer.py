@@ -18,7 +18,8 @@ import random
 import time
 
 from app.db import query_one, query_all, execute_write
-from app.services.validatori import valida_assegnazione, _flag_matcha, _get_flag_map
+from app.services.validatori import valida_assegnazione, _flag_matcha
+from app.services.fasce_orarie import carica_mappa_flag
 from app.services.history import aggiungi_step
 from app.services.config_snapshot import (
     carica_config_snapshot,
@@ -368,7 +369,7 @@ def esegui_ottimizzazione(calendario_id, user_id_chiamante,
         giorni_esclusi_cache = snap_giorni_esclusi(config_snap)
     else:
         vincoli_g = _carica_vincoli_globali()
-        flag_map = _get_flag_map()
+        flag_map = carica_mappa_flag()
         vincoli_utente_cache = {}
         for u_temp in query_all(
             "SELECT id FROM users WHERE is_active=1 AND role IN ('basic','manager','admin')"

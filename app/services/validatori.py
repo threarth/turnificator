@@ -20,74 +20,60 @@ get_disponibili() restituisce lista lavoratori con i loro conflitti.
 import json
 
 from app.db import query_one, query_all
+from app.services.fasce_orarie import carica_mappa_flag, catena_antenati
 
 
 # ---------------------------------------------------------------------------
-# Cache flag gerarchia (caricata una volta per request context)
+# Gerarchia dei flag
 # ---------------------------------------------------------------------------
 
-_flag_cache = None
-
-def _get_flag_map():
+def _flag_matcha(flag_id_entita, flag_id_regola, mappa_flag):
     """
-    Restituisce una mappa { flag_id: { id, nome, parent_id, parent_nome } }.
-    Cachea per la durata della request.
-    """
-    global _flag_cache
-    if _flag_cache is not None:
-        return _flag_cache
-    rows = query_all(
-        "SELECT f.id, f.nome, f.parent_id, f.tipo, "
-        "p.nome AS parent_nome "
-        "FROM flag_turno f LEFT JOIN flag_turno p ON f.parent_id = p.id",
-        ()
-    )
-    _flag_cache = {r['id']: dict(r) for r in rows}
-    return _flag_cache
+    Il flag di un'entita' soddisfa il flag richiesto da una regola?
 
+    Vale anche per discendenza: una regola sul concetto `notturno` matcha
+    ogni fascia che ne discende, comunque l'abbiano rinominata.
 
-def _flag_matcha(flag_id_entita, flag_id_regola):
-    """
-    Verifica se il flag di un'entità matcha il flag di una regola.
-    Risale la gerarchia parent (max 2 livelli).
+    Args:
+        flag_id_entita (int|None): flag dell'entita'; None non matcha nulla.
+        flag_id_regola (int|None): flag della regola; None e' un jolly.
+        mappa_flag (dict): mappa id → flag della configurazione in vigore.
 
-    flag_id_regola = None → matcha qualsiasi flag (wildcard).
-    flag_id_entita = None → non matcha nessun flag specifico.
+    Returns:
+        bool: True se la regola si applica.
     """
     if flag_id_regola is None:
-        return True  # wildcard
+        return True
     if flag_id_entita is None:
-        return False  # nessun flag, non può matchare
-    if flag_id_entita == flag_id_regola:
-        return True
-    # Risali al parent
-    fm = _get_flag_map()
-    flag = fm.get(flag_id_entita)
-    if flag and flag['parent_id'] == flag_id_regola:
-        return True
-    return False
+        return False
+
+    return flag_id_regola in catena_antenati(flag_id_entita, mappa_flag)
 
 
-def _flag_nome_matcha(flag_nome_entita, flag_id_regola):
+def _flag_nome_matcha(flag_nome_entita, flag_id_regola, mappa_flag):
     """
-    Come _flag_matcha ma partendo dal nome del flag (usato con snapshot).
+    Come _flag_matcha, partendo dal nome invece che dall'id.
+
+    Gli snapshot dei calendari portano il nome del flag, non il suo id.
+
+    Args:
+        flag_nome_entita (str|None): nome del flag dell'entita'.
+        flag_id_regola (int|None): flag della regola; None e' un jolly.
+        mappa_flag (dict): mappa id → flag della configurazione in vigore.
+
+    Returns:
+        bool: True se la regola si applica.
     """
     if flag_id_regola is None:
         return True
     if not flag_nome_entita:
         return False
-    fm = _get_flag_map()
-    # Cerca il flag per nome
-    for fid, fdata in fm.items():
+
+    for fid, fdata in mappa_flag.items():
         if fdata['nome'] == flag_nome_entita:
-            return _flag_matcha(fid, flag_id_regola)
+            return _flag_matcha(fid, flag_id_regola, mappa_flag)
+
     return False
-
-
-def _reset_flag_cache():
-    """Reset cache flag (chiamare a fine request se necessario)."""
-    global _flag_cache
-    _flag_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +260,7 @@ def _get_desiderata_ref(calendario_id, user_id, giorno):
 # Matching regole
 # ---------------------------------------------------------------------------
 
-def _valuta_tipo_vs_tipo(regole, flag_nuovo, ass_lista, bidirezionale=True):
+def _valuta_tipo_vs_tipo(regole, flag_nuovo, ass_lista, mappa_flag, bidirezionale=True):
     """
     Valuta regole tipo_vs_tipo tra il turno nuovo e le assegnazioni esistenti.
     Restituisce lista di regole attivate (dict con id, categoria, stile, blocca, peso).
@@ -289,20 +275,20 @@ def _valuta_tipo_vs_tipo(regole, flag_nuovo, ass_lista, bidirezionale=True):
         for a in ass_lista:
             flag_esistente = a.get('flag_nome')
             # Direzione: nuovo=A, esistente=B
-            if (_flag_nome_matcha(flag_nuovo, r.get('flag_a_id'))
-                    and _flag_nome_matcha(flag_esistente, r.get('flag_b_id'))):
+            if (_flag_nome_matcha(flag_nuovo, r.get('flag_a_id'), mappa_flag)
+                    and _flag_nome_matcha(flag_esistente, r.get('flag_b_id'), mappa_flag)):
                 conflitti.append(_conflitto_da_regola(r))
                 break
             # Direzione inversa: esistente=A, nuovo=B (solo per stesso giorno)
             if bidirezionale:
-                if (_flag_nome_matcha(flag_esistente, r.get('flag_a_id'))
-                        and _flag_nome_matcha(flag_nuovo, r.get('flag_b_id'))):
+                if (_flag_nome_matcha(flag_esistente, r.get('flag_a_id'), mappa_flag)
+                        and _flag_nome_matcha(flag_nuovo, r.get('flag_b_id'), mappa_flag)):
                     conflitti.append(_conflitto_da_regola(r))
                     break
     return conflitti
 
 
-def _valuta_desiderata(regole, flag_turno, des_ref):
+def _valuta_desiderata(regole, flag_turno, des_ref, mappa_flag):
     """
     Valuta regole desiderata (mismatch e notworking_mismatch).
     """
@@ -319,13 +305,13 @@ def _valuta_desiderata(regole, flag_turno, des_ref):
             if req_tipo == 'assenza':
                 # Verifica che il flag del desiderata matchi flag_a della regola
                 req_flag_id = des_ref.get('req_flag_id')
-                if r.get('flag_a_id') is None or _flag_matcha(req_flag_id, r.get('flag_a_id')):
+                if r.get('flag_a_id') is None or _flag_matcha(req_flag_id, r.get('flag_a_id'), mappa_flag):
                     conflitti.append(_conflitto_da_regola(r))
 
         elif r['tipo_regola'] == 'desiderata_mismatch':
             # Attiva se il flag del desiderata non corrisponde al flag del turno
             if req_tipo == 'lavorativo' and req_flag_nome and flag_turno:
-                if not _flag_nome_matcha(flag_turno, des_ref.get('req_flag_id')):
+                if not _flag_nome_matcha(flag_turno, des_ref.get('req_flag_id'), mappa_flag):
                     conflitti.append(_conflitto_da_regola(r))
 
     return conflitti
@@ -360,7 +346,10 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
                                  e forza_inserimento=False
             - 'avviso_domani' (bool): True se regole offset=1 coinvolgono questo flag
     """
-    _reset_flag_cache()
+    # Import locale: config_snapshot importa snapshot_regole da qui.
+    from app.services.config_snapshot import carica_config_snapshot
+
+    mappa_flag = carica_mappa_flag(carica_config_snapshot(calendario_id))
     info_nuovo = _get_info_turno(turno_id)
     flag_nuovo = info_nuovo['flag_nome']
 
@@ -383,18 +372,18 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
     des_ref = _get_desiderata_ref(calendario_id, user_id, giorno)
     regole_des = [r for r in regole if r['tipo_regola'] in
                   ('desiderata_mismatch', 'desiderata_assenza_mismatch')]
-    conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref))
+    conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref, mappa_flag))
 
     # ── Regole tipo_vs_tipo offset=0 (stesso giorno) ──
     ass_oggi = [a for a in _get_assegnazioni_utente_giorno(calendario_id, user_id, giorno)
                 if a['turno_id'] != turno_id]
     regole_0 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 0]
-    conflitti.extend(_valuta_tipo_vs_tipo(regole_0, flag_nuovo, ass_oggi))
+    conflitti.extend(_valuta_tipo_vs_tipo(regole_0, flag_nuovo, ass_oggi, mappa_flag))
 
     # ── Regole tipo_vs_tipo offset=1 (turno nuovo oggi=A, esistente domani=B) ──
     ass_domani = _get_assegnazioni_utente_giorno(calendario_id, user_id, giorno + 1)
     regole_1 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 1]
-    conflitti.extend(_valuta_tipo_vs_tipo(regole_1, flag_nuovo, ass_domani, bidirezionale=False))
+    conflitti.extend(_valuta_tipo_vs_tipo(regole_1, flag_nuovo, ass_domani, mappa_flag, bidirezionale=False))
 
     # ── Reverse: se ieri c'è un turno con regola offset=1, oggi è il "giorno dopo" ──
     if giorno > 1:
@@ -404,8 +393,8 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
         for r in regole_1:
             for a in ass_ieri:
                 flag_ieri = a.get('flag_nome')
-                if (_flag_nome_matcha(flag_ieri, r.get('flag_a_id'))
-                        and _flag_nome_matcha(flag_nuovo, r.get('flag_b_id'))):
+                if (_flag_nome_matcha(flag_ieri, r.get('flag_a_id'), mappa_flag)
+                        and _flag_nome_matcha(flag_nuovo, r.get('flag_b_id'), mappa_flag)):
                     conflitti.append(_conflitto_da_regola(r))
                     break
 
@@ -425,7 +414,7 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
     avviso_domani = any(
         r['tipo_regola'] == 'tipo_vs_tipo'
         and r['offset_giorni'] == 1
-        and _flag_nome_matcha(flag_nuovo, r.get('flag_a_id'))
+        and _flag_nome_matcha(flag_nuovo, r.get('flag_a_id'), mappa_flag)
         for r in regole
     )
 
@@ -440,10 +429,19 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
 # Calcolo codice colore cella (working desiderata)
 # ---------------------------------------------------------------------------
 
-def calcola_conflitto_wd(working_desiderata, flag_nome=None):
+def calcola_conflitto_wd(working_desiderata, flag_nome=None, mappa_flag=None):
     """
-    Calcola il codice match/mismatch/free/forced per il working_desiderata.
-    Usa i flag per il confronto.
+    Il codice colore di una cella rispetto al desiderata del lavoratore.
+
+    Args:
+        working_desiderata (dict|None): richiesta del lavoratore per quel giorno.
+        flag_nome (str|None): fascia del turno assegnato.
+        mappa_flag (dict|None): gerarchia in vigore; senza, si usa quella
+                                corrente, che e' il caso dei chiamanti che non
+                                partono da un calendario.
+
+    Returns:
+        str: 'free', 'forced', 'match' o 'mismatch'.
     """
     if not working_desiderata or not working_desiderata.get('tipo_richiesta_id'):
         return 'free'
@@ -455,18 +453,20 @@ def calcola_conflitto_wd(working_desiderata, flag_nome=None):
     # Match basato su flag
     req_flag_id = working_desiderata.get('req_flag_id')
     if req_flag_id and flag_nome:
-        if _flag_nome_matcha(flag_nome, req_flag_id):
+        if mappa_flag is None:
+            mappa_flag = carica_mappa_flag()
+        if _flag_nome_matcha(flag_nome, req_flag_id, mappa_flag):
             return 'match'
         return 'mismatch'
 
     return 'match'
 
 
-def calcola_conflitto(flag_nome, working_desiderata, forzato):
+def calcola_conflitto(flag_nome, working_desiderata, forzato, mappa_flag=None):
     """Retrocompatibilità."""
     if forzato:
         return 'forced'
-    return calcola_conflitto_wd(working_desiderata, flag_nome)
+    return calcola_conflitto_wd(working_desiderata, flag_nome, mappa_flag)
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +478,10 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
     Restituisce la lista dei lavoratori disponibili per un dato turno/giorno.
     Include conflitti come lista di regole attivate con severità.
     """
-    _reset_flag_cache()
+    # Import locale: config_snapshot importa snapshot_regole da qui.
+    from app.services.config_snapshot import carica_config_snapshot
+
+    mappa_flag = carica_mappa_flag(carica_config_snapshot(calendario_id))
     info_nuovo = _get_info_turno(turno_id)
     flag_nuovo = info_nuovo['flag_nome']
 
@@ -517,12 +520,12 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
         des_ref = _get_desiderata_ref(calendario_id, uid, giorno)
         regole_des = [r for r in regole if r['tipo_regola'] in
                       ('desiderata_mismatch', 'desiderata_assenza_mismatch')]
-        conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref))
+        conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref, mappa_flag))
 
         # Stesso giorno (offset=0)
         ass_oggi = _get_assegnazioni_utente_giorno(calendario_id, uid, giorno)
         regole_0 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 0]
-        conflitti.extend(_valuta_tipo_vs_tipo(regole_0, flag_nuovo, ass_oggi))
+        conflitti.extend(_valuta_tipo_vs_tipo(regole_0, flag_nuovo, ass_oggi, mappa_flag))
 
         # Giorno precedente → regole offset=1 (ieri=A, oggi=B)
         if giorno > 1:
@@ -531,15 +534,15 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
             for r in regole_1:
                 for a in ass_ieri:
                     flag_ieri = a.get('flag_nome')
-                    if (_flag_nome_matcha(flag_ieri, r.get('flag_a_id'))
-                            and _flag_nome_matcha(flag_nuovo, r.get('flag_b_id'))):
+                    if (_flag_nome_matcha(flag_ieri, r.get('flag_a_id'), mappa_flag)
+                            and _flag_nome_matcha(flag_nuovo, r.get('flag_b_id'), mappa_flag)):
                         conflitti.append(_conflitto_da_regola(r))
                         break
 
         # Giorno successivo (offset=1)
         ass_domani = _get_assegnazioni_utente_giorno(calendario_id, uid, giorno + 1)
         regole_1_fwd = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 1]
-        conflitti.extend(_valuta_tipo_vs_tipo(regole_1_fwd, flag_nuovo, ass_domani))
+        conflitti.extend(_valuta_tipo_vs_tipo(regole_1_fwd, flag_nuovo, ass_domani, mappa_flag))
 
         # Deduplica
         seen = set()
