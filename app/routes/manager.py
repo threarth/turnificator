@@ -52,6 +52,11 @@ from app.services.websocket import (
 
 bp = Blueprint('manager', __name__, url_prefix='/api/manager')
 
+# Termine interno per la struttura, usato finche' il tenant non sceglie
+# la propria parola nella procedura guidata. Il plurale e' dichiarato,
+# non derivato: dal singolare non e' ricavabile.
+ETICHETTA_STRUTTURA_DEFAULT = {'singolare': 'Sovragruppo', 'plurale': 'Sovragruppi'}
+
 
 # =============================================================================
 # CALENDARI
@@ -111,6 +116,31 @@ def get_effettivo(cal_id):
 # =============================================================================
 # STRUTTURA COMPLETA CALENDARIO
 # =============================================================================
+
+def _etichetta_struttura():
+    """
+    La parola con cui il tenant chiama le sue strutture.
+
+    "Sovragruppo" e' il termine interno e resta il ripiego finche' nessuno ha
+    scelto il proprio: reparto, ambulatorio, presidio.
+
+    Returns:
+        dict: {singolare, plurale}.
+    """
+    righe = query_all(
+        "SELECT chiave, valore FROM config "
+        "WHERE chiave IN ('etichetta_struttura', 'etichetta_strutture')"
+    )
+    valori = {r['chiave']: r['valore'] for r in righe}
+    singolare = valori.get('etichetta_struttura')
+    if not singolare:
+        return dict(ETICHETTA_STRUTTURA_DEFAULT)
+
+    return {
+        'singolare': singolare,
+        'plurale': valori.get('etichetta_strutture') or singolare,
+    }
+
 
 @bp.route('/calendari/<int:cal_id>/struttura', methods=['GET'])
 @require_role('admin', 'manager')
@@ -349,6 +379,9 @@ def struttura_calendario(cal_id):
             )
         ],
         'utenti_accessibili': utenti_acc_list,
+        # Come l'utente chiama le sue strutture: la config e' riservata
+        # all'admin, quindi al manager la parola arriva di qui.
+        'etichetta_struttura': _etichetta_struttura(),
         'accesso_info': {
             'turni_accessibili': turni_accessibili_count,
             'turni_totali': turni_totali,

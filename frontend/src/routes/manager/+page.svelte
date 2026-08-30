@@ -9,6 +9,7 @@
   } from '$lib/socket.js';
   import { user as userStore } from '$lib/auth.js';
   import StyleContextMenu from '$lib/StyleContextMenu.svelte';
+  import { etichettaStruttura } from '$lib/etichette.js';
   import CellEditor from '$lib/CellEditor.svelte';
   import { clickOutside } from '$lib/admin/actions.js';
   import AppearanceEditor, { APPEARANCE_DEFAULT } from '$lib/admin/AppearanceEditor.svelte';
@@ -19,6 +20,13 @@
   let calendari  = $state([]);
   let calId      = $state(null);
   let struttura  = $state(null);
+
+  // La parola con cui il tenant chiama le sue strutture viaggia con la
+  // struttura: la config del tenant e' riservata all'admin. Un effetto
+  // solo copre tutti i punti che ricaricano la struttura.
+  $effect(() => {
+    if (struttura?.etichetta_struttura) etichettaStruttura.set(struttura.etichetta_struttura);
+  });
   let loading    = $state(false);
 
   // Lista piatta di tutti gli utenti basic (id → sigla).
