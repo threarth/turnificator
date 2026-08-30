@@ -29,6 +29,7 @@
     - onapplyall()              — "Applica a tutti i gruppi" premuto
 -->
 <script>
+  import { etichettaStruttura } from '$lib/etichette.js';
   let {
     x = 0,
     y = 0,
@@ -108,7 +109,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="scm-drag-bar" onmousedown={onDragStart}>
     <span style="font-size:.72rem;color:var(--ctx-muted);font-weight:600">
-      {isSg ? 'Formato Sovragruppo' : 'Formato Gruppo'}
+      {isSg ? `Formato ${$etichettaStruttura.singolare}` : 'Formato Gruppo'}
     </span>
     <button class="scm-close" onclick={onclose}>&times;</button>
   </div>

@@ -12,6 +12,7 @@
   import FlagRow from '$lib/admin/FlagRow.svelte';
   import FlagForm from '$lib/admin/FlagForm.svelte';
   import ProceduraGuidata from '$lib/admin/ProceduraGuidata.svelte';
+  import { etichettaStruttura, leggiEtichettaDaConfig } from '$lib/etichette.js';
   import { decToHm, hmToDec } from '$lib/admin/durate.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
   import EditableTable from '$lib/admin/EditableTable.svelte';
@@ -86,9 +87,6 @@
   // Procedura guidata: crea sempre un preset nuovo, non tocca gli altri.
   let wizardAttivo = false;
 
-  // Come l'utente chiama le sue strutture — sovragruppo e' un termine
-  // interno che non deve arrivare a chi configura il sistema.
-  let etichettaStruttura = { singolare: 'Sovragruppo', plurale: 'Sovragruppi' };
   let nuovoGruppo = { nome: '', sigla: '', flag_id: null };
   let nuovoTurno  = { nome: '', tipiQualitativoIds: [] };
   let showAddSg   = false;
@@ -261,12 +259,7 @@
     }
     const cfg = await adminApi.getConfig();
     config = cfg.config ?? {};
-    if (config['etichetta_struttura']) {
-      etichettaStruttura = {
-        singolare: config['etichetta_struttura'],
-        plurale: config['etichetta_strutture'] || config['etichetta_struttura'],
-      };
-    }
+    leggiEtichettaDaConfig(config);
     try { conteggiConfig = JSON.parse(config['conteggi_context'] || '[]'); } catch { conteggiConfig = []; }
     // Vincoli solver
     const [rvg, rvs] = await Promise.all([
@@ -930,7 +923,7 @@
   // La procedura guidata ha creato il preset: lo si apre nell'editor
   // normale, dove l'utente esperto prosegue a mano.
   async function wizardCompletato(presetId, etichetta) {
-    etichettaStruttura = etichetta;
+    etichettaStruttura.set(etichetta);
     wizardAttivo = false;
     presets = (await adminApi.getPresets()).presets ?? [];
     const creato = presets.find(p => p.id === presetId);
@@ -1833,7 +1826,7 @@
             </select></div>
           <div class="col-auto"><label class="form-label small">Sigla</label>
             <input class="form-control form-control-sm" bind:value={nuovoUtente.sigla} style="width:80px" /></div>
-          <div class="col-auto"><label class="form-label small">Sovragruppo</label>
+          <div class="col-auto"><label class="form-label small">{$etichettaStruttura.singolare}</label>
             <select class="form-select form-select-sm" bind:value={nuovoUtente.sovragruppo_id} style="min-width:140px">
               <option value={null}>— Nessuno —</option>
               {#each sovragruppiDisponibili as sg (sg.id)}
@@ -1887,7 +1880,7 @@
       <div class="d-flex align-items-center gap-1">
         <label class="small mb-0">Campo</label>
         <select class="form-select form-select-sm" style="width:auto" bind:value={bulkCampo}>
-          <option value="sovragruppo_id">Sovragruppo</option>
+          <option value="sovragruppo_id">{$etichettaStruttura.singolare}</option>
           <option value="is_active">Attivo</option>
           <option value="escluso_turni">Escluso turni</option>
           <option value="puo_gestire_calendari">Gestione calendari</option>
@@ -1951,7 +1944,7 @@
         <thead class="table-light">
           <tr>
             <th style="width:30px"></th>
-            <th style="width:80px">Sigla</th><th style="width:120px">Username</th><th style="width:100px">Ruolo</th><th style="width:140px">Sovragruppo</th><th style="width:85px">Attivo</th><th style="width:50px" title="Incluso nel sistema turni">Turni</th><th style="width:50px" title="Può creare/eliminare calendari">Cal.</th><th style="width:100px">Manager</th><th style="width:60px"></th>
+            <th style="width:80px">Sigla</th><th style="width:120px">Username</th><th style="width:100px">Ruolo</th><th style="width:140px">{$etichettaStruttura.singolare}</th><th style="width:85px">Attivo</th><th style="width:50px" title="Incluso nel sistema turni">Turni</th><th style="width:50px" title="Può creare/eliminare calendari">Cal.</th><th style="width:100px">Manager</th><th style="width:60px"></th>
           </tr>
         </thead>
         <tbody>
@@ -2743,7 +2736,7 @@
 
     {#if wizardAttivo}
 
-      <ProceduraGuidata fasce={flagTurno} etichetta={etichettaStruttura}
+      <ProceduraGuidata fasce={flagTurno} etichetta={$etichettaStruttura}
                         oncompletata={wizardCompletato}
                         onannulla={() => wizardAttivo = false}
                         onfasceaggiornate={async () => {
@@ -2916,7 +2909,7 @@
                   isOpen={accessoDropdownOpen === 'sg_' + sg.id}
                   label={accessoLabelBulk('sg', sg.id, accessoVersion)}
                   disabled={_hasUnsavedTurni('sg', sg.id)}
-                  title="Manager accesso per tutti i turni del sovragruppo"
+                  title="Manager accesso per tutti i turni: {$etichettaStruttura.singolare.toLowerCase()}"
                   ontoggleopen={() => { if (!_hasUnsavedTurni('sg', sg.id)) toggleAccessoDropdown('sg_' + sg.id); else setMsg('stru', 'Salva prima la struttura: ci sono turni non ancora salvati.', false); }}
                   onchange={s => salvaAccessoBulk('sg', sg.id, s)}
                 />
@@ -3225,7 +3218,7 @@
           <div class="stru-add-sg d-flex align-items-center gap-2 px-2 py-2 border-top">
             <i class="bi bi-collection text-primary"></i>
             <input class="form-control form-control-sm" use:autowidth use:focusOnMount
-                   placeholder="Nome {etichettaStruttura.singolare.toLowerCase()}"
+                   placeholder="Nome {$etichettaStruttura.singolare.toLowerCase()}"
                    bind:value={nuovoSg.nome}
                    on:input={() => { if (autoSigla) nuovoSg.sigla = toSigla(nuovoSg.nome); }}
                    on:keydown={e => e.key === 'Enter' && addSg()} />
@@ -3247,14 +3240,15 @@
         {:else}
           <div class="px-2 py-2 border-top">
             <button class="btn btn-outline-primary btn-sm" on:click={() => { showAddSg=true; nuovoSg={nome:'',sigla:'',ambito:''}; }}>
-              <i class="bi bi-plus-lg me-1"></i>Aggiungi {etichettaStruttura.singolare.toLowerCase()}
+              <i class="bi bi-plus-lg me-1"></i>Aggiungi {$etichettaStruttura.singolare.toLowerCase()}
             </button>
           </div>
         {/if}
 
         {#if editPreset.struttura.length === 0 && !showAddSg}
           <div class="text-center text-muted small py-4">
-            Nessun sovragruppo. Clicca "Aggiungi sovragruppo" per iniziare.
+            La struttura turni è vuota. Comincia da "Aggiungi
+            {$etichettaStruttura.singolare.toLowerCase()}" qui sotto.
           </div>
         {/if}
       </div>
@@ -3310,7 +3304,7 @@
                         on:change={() => (etPresetForm.target_id = null)}>
                   <option value="turno">Turno</option>
                   <option value="gruppo">Gruppo</option>
-                  <option value="sovragruppo">Sovragruppo</option>
+                  <option value="sovragruppo">{$etichettaStruttura.singolare}</option>
                 </select>
               </div>
               <div class="flex-grow-1">

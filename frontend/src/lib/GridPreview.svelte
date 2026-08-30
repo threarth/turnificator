@@ -1,4 +1,5 @@
 <script>
+  import { etichettaStruttura } from '$lib/etichette.js';
   /** Anteprima griglia turni — read-only, 7 giorni.
    *  Riceve la struttura preset (array di sovragruppi) e la mostra
    *  come tabella stile griglia manager, con stili applicati. */
@@ -59,7 +60,7 @@
 
 {#if struttura.length === 0}
   <div class="text-muted small text-center py-4">
-    Aggiungi sovragruppi per vedere l'anteprima griglia.
+    Aggiungi {$etichettaStruttura.plurale.toLowerCase()} per vedere l'anteprima griglia.
   </div>
 {:else}
   <div class="gp-wrap">
