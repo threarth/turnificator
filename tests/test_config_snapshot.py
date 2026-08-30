@@ -101,3 +101,58 @@ def test_tipi_richiesta_indicizzati_per_id(app):
 
     assert tipi[7]['sigla'] == 'F'
     assert tipi[7]['counting_flag'] == 1
+
+
+# ---------------------------------------------------------------------------
+# Le ore giustificate restano quelle del momento in cui si e' chiuso
+# ---------------------------------------------------------------------------
+
+def _tipo_richiesta_assenza_contabile(client, token, auth):
+    """Il primo tipo richiesta che vale come ora giustificata."""
+    rv = client.get('/api/admin/tipi-richiesta', headers=auth(token))
+    assert rv.status_code == 200, rv.get_json()
+
+    return next(
+        t for t in rv.get_json()['tipi']
+        if t['tipo'] == 'assenza' and t['counting_flag']
+    )
+
+
+def _ore_giustificate(client, token, auth, cal_id):
+    """Somma delle ore giustificate di tutti i lavoratori."""
+    rv = client.get(f'/api/manager/calendari/{cal_id}/ore', headers=auth(token))
+    assert rv.status_code == 200, rv.get_json()
+
+    return sum(r['ore_giustificate'] for r in rv.get_json()['ore'])
+
+
+def test_le_ore_non_cambiano_se_cambia_il_tipo_richiesta(
+        client, admin_token, auth, _test_env):
+    """
+    Un calendario chiuso mesi fa non deve riscriversi le ore perche' oggi
+    qualcuno ha tolto la spunta "conta" a un tipo di assenza.
+    """
+    from tests.conftest import _open_sqlcipher
+
+    cal_id = _crea_calendario(client, admin_token, auth, mese=10)
+    tipo = _tipo_richiesta_assenza_contabile(client, admin_token, auth)
+
+    # Un'assenza contabile a calendario gia' creato, cioe' gia' congelato.
+    db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
+    uid = db.execute("SELECT id FROM users WHERE username='basic_t'").fetchone()['id']
+    db.execute(
+        "INSERT INTO working_desiderata (calendario_id, user_id, giorno, tipo_richiesta_id) "
+        "VALUES (?,?,?,?)",
+        (cal_id, uid, 5, tipo['id'])
+    )
+    db.commit()
+
+    ore_prima = _ore_giustificate(client, admin_token, auth, cal_id)
+    assert ore_prima > 0, 'il caso non prova nulla se non ci sono ore giustificate'
+
+    # La configurazione cambia dopo: il calendario non deve accorgersene.
+    rv = client.put(f"/api/admin/tipi-richiesta/{tipo['id']}",
+                    json={**tipo, 'counting_flag': 0}, headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    assert _ore_giustificate(client, admin_token, auth, cal_id) == ore_prima

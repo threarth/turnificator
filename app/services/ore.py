@@ -25,11 +25,75 @@ Logica ore:
 """
 
 from app.db import query_all, query_one
+from app.services.config_snapshot import carica_config_snapshot, snap_tipi_richiesta
 
 
 # ---------------------------------------------------------------------------
 # Ore mensili per singolo lavoratore
 # ---------------------------------------------------------------------------
+
+# Un tipo richiesta vale come ora giustificata se e' un'assenza e conta.
+TIPO_RICHIESTA_ASSENZA = 'assenza'
+
+
+def _tipi_richiesta_contabili(calendario_id):
+    """
+    Gli id dei tipi richiesta che valgono come ore giustificate.
+
+    Il criterio viene dallo snapshot del calendario, cioe' dai tipi richiesta
+    com'erano quando il calendario e' stato creato. Solo per i calendari
+    nati prima dello snapshot completo si ricade sulla configurazione
+    corrente, che e' quanto di meglio si abbia.
+
+    Args:
+        calendario_id (int): calendario di cui si calcolano le ore.
+
+    Returns:
+        set: id dei tipi richiesta contabili.
+    """
+    tipi = snap_tipi_richiesta(carica_config_snapshot(calendario_id))
+
+    if tipi:
+        return {
+            tid for tid, t in tipi.items()
+            if t.get('tipo') == TIPO_RICHIESTA_ASSENZA and t.get('counting_flag')
+        }
+
+    righe = query_all(
+        "SELECT id FROM tipi_richiesta WHERE tipo = ? AND counting_flag = 1",
+        (TIPO_RICHIESTA_ASSENZA,)
+    )
+    return {r['id'] for r in righe}
+
+
+def _assenze_contabili_per_utente(calendario_id, tipi_contabili):
+    """
+    I giorni di assenza contabile di ogni lavoratore.
+
+    Args:
+        calendario_id (int): calendario di riferimento.
+        tipi_contabili (set): id dei tipi richiesta che contano.
+
+    Returns:
+        dict: {user_id → [giorni]}, vuoto se nessun tipo conta.
+    """
+    if not tipi_contabili:
+        return {}
+
+    righe = query_all(
+        "SELECT user_id, giorno, tipo_richiesta_id FROM working_desiderata "
+        "WHERE calendario_id = ?",
+        (calendario_id,)
+    )
+
+    per_utente = {}
+    for r in righe:
+        if r['tipo_richiesta_id'] not in tipi_contabili:
+            continue
+        per_utente.setdefault(r['user_id'], []).append(r['giorno'])
+
+    return per_utente
+
 
 def calcola_ore_mensili(calendario_id):
     """
@@ -60,6 +124,15 @@ def calcola_ore_mensili(calendario_id):
         return []
 
     ore_default = cal['ore_giornaliere_default']
+
+    # I tipi richiesta che valgono come ore giustificate sono quelli con
+    # cui il calendario e' stato costruito: cambiarli oggi non deve
+    # riscrivere le ore di un mese gia' chiuso.
+    tipi_contabili = _tipi_richiesta_contabili(calendario_id)
+
+    # Assenze di tutti i lavoratori in una volta, invece di una query per
+    # ciascuno: il filtro sul tipo lo fa il criterio congelato.
+    assenze_per_utente = _assenze_contabili_per_utente(calendario_id, tipi_contabili)
 
     # Tutti i lavoratori Basic attivi
     lavoratori = query_all(
@@ -130,29 +203,15 @@ def calcola_ore_mensili(calendario_id):
                     giorni_festivi_lavorati += 1
                     giorni_superfestivi_lavorati += 1
 
-        # --- Ore da richieste assenza con counting_flag=TRUE ---
-        wd_contabili = query_all(
-            """
-            SELECT wd.giorno
-            FROM working_desiderata wd
-            JOIN tipi_richiesta tr ON wd.tipo_richiesta_id = tr.id
-            WHERE wd.calendario_id = ?
-              AND wd.user_id = ?
-              AND tr.tipo = 'assenza'
-              AND tr.counting_flag = 1
-            """,
-            (calendario_id, uid)
-        )
-
+        # --- Ore da richieste assenza contabili ---
         ore_giustificate = 0.0
         giorni_giustificati = 0
 
-        for wd in wd_contabili:
-            g = mappa_giorni.get(wd['giorno'])
+        for giorno_assenza in assenze_per_utente.get(uid, ()):
+            g = mappa_giorni.get(giorno_assenza)
             if not g:
                 continue
-            ore_g = g['ore_lavorative'] if g['ore_lavorative'] is not None else ore_default
-            ore_giustificate += ore_g
+            ore_giustificate += g['ore_lavorative'] if g['ore_lavorative'] is not None else ore_default
             giorni_giustificati += 1
 
         risultati.append({
