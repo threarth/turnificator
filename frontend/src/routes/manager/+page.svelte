@@ -3894,7 +3894,7 @@
 
           <div class="d-flex gap-1 mt-1">
             <select class="form-select form-select-sm" style="max-width:150px" id="sv-crit-flag">
-              <option value="">+ Flag...</option>
+              <option value="">+ Fascia...</option>
               {#if struttura?.sovragruppi}
                 {#each [...new Set(struttura.sovragruppi.flatMap(sg => sg.gruppi.flatMap(g => g.turni.filter(t => t.flag_nome).map(t => t.flag_nome))))] as fn}
                   {#if !solverCriteri.some(c => c.tipo === 'flag' && c.flag_nome === fn)}
@@ -4220,7 +4220,7 @@
       {#if snapVincoliSolver.filter(v => v.tipo === 'flag').length}
         <table class="table table-sm mb-2" style="font-size:.78rem">
           <thead class="table-light"><tr>
-            <th>Flag</th><th style="width:70px">Max N</th>
+            <th>Fascia oraria</th><th style="width:70px">Max N</th>
             <th style="width:45px">Attivo</th><th style="width:35px"></th>
           </tr></thead>
           <tbody>
@@ -4230,7 +4230,7 @@
                 <td>
                   <select class="form-select form-select-sm" bind:value={vs.ref_id}
                           onchange={() => { snapVincoliDirty = true; }}>
-                    <option value={null}>{'\u2014 seleziona flag \u2014'}</option>
+                    <option value={null}>{'\u2014 scegli una fascia \u2014'}</option>
                     {#each solverFlagTurno.filter(f => f.mostra_in_struttura) as f}
                       <option value={f.id}>{f.nome}{f.parent_nome ? ` (${f.parent_nome})` : ''}</option>
                     {/each}
@@ -4260,7 +4260,7 @@
           </tbody>
         </table>
       {:else}
-        <div class="text-muted small mb-2">Nessun limite flag configurato.</div>
+        <div class="text-muted small mb-2">Nessun limite per fascia oraria.</div>
       {/if}
 
       <!-- Limiti mensili max per caratteristica qualitativa -->
@@ -4344,7 +4344,7 @@
         <div style="max-height:400px;overflow-y:auto">
           <table class="table table-sm table-hover mb-0" style="font-size:.78rem">
             <thead class="table-light"><tr>
-              <th>Utente</th><th>Vincoli override</th><th>Limiti flag/tipo</th><th>Esclusioni flag</th>
+              <th>Utente</th><th>Vincoli override</th><th>Limiti per fascia o tipo</th><th>Esclusioni per fascia</th>
             </tr></thead>
             <tbody>
               {#each solverUtenti as u}
@@ -4407,12 +4407,12 @@
                       </table>
                     {:else}<div class="text-muted small mb-2">Nessun override.</div>{/if}
 
-                    <!-- Limiti flag/tipo -->
+                    <!-- Limiti per fascia o tipo -->
                     <div class="d-flex align-items-center gap-2 mb-1">
-                      <strong style="font-size:.75rem">Limiti flag/tipo</strong>
+                      <strong style="font-size:.75rem">Limiti per fascia o tipo</strong>
                       <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem"
                               onclick={() => { solverEditVSolver = [...solverEditVSolver, {tipo:'flag',ref_id:null,max_n:0,note:''}]; }}>
-                        <i class="bi bi-plus"></i> Flag
+                        <i class="bi bi-plus"></i> Fascia
                       </button>
                       <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem"
                               onclick={() => { solverEditVSolver = [...solverEditVSolver, {tipo:'qualitativo',ref_id:null,max_n:0,note:''}]; }}>
@@ -4452,7 +4452,7 @@
 
                     <!-- Esclusioni flag -->
                     <div class="d-flex align-items-center gap-2 mb-1">
-                      <strong style="font-size:.75rem">Esclusioni turno (flag)</strong>
+                      <strong style="font-size:.75rem">Esclusioni per fascia oraria</strong>
                       <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem"
                               onclick={() => { solverEditEscl = [...solverEditEscl, {flag_id:null,flag_nome:'',note:''}]; }}>
                         <i class="bi bi-plus"></i>
@@ -4460,13 +4460,13 @@
                     </div>
                     {#if solverEditEscl.length}
                       <table class="table table-sm mb-0" style="font-size:.78rem">
-                        <thead><tr><th>Flag escluso</th><th>Note</th><th></th></tr></thead>
+                        <thead><tr><th>Fascia esclusa</th><th>Note</th><th></th></tr></thead>
                         <tbody>
                         {#each solverEditEscl as eu, i}
                           <tr>
                             <td>
                               <select class="form-select form-select-sm" style="font-size:.78rem" bind:value={eu.flag_id} onchange={solverSalvaEscl}>
-                                <option value={null}>— flag —</option>
+                                <option value={null}>— scegli una fascia —</option>
                                 {#each solverFlagTurno.filter(f => f.mostra_in_struttura) as f}
                                   <option value={f.id}>{f.nome}{f.parent_nome ? ` (${f.parent_nome})` : ''}</option>
                                 {/each}

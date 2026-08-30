@@ -2940,7 +2940,7 @@
                 <label class="form-label mb-0 small text-muted">Sigla:</label>
                 <input class="form-control form-control-sm" use:autowidth use:focusIf={editFocus==='sigla'} placeholder="Sigla"
                        bind:value={editingValue.sigla} on:keydown={onEditKeydown} />
-                <label class="form-label mb-0 small text-muted">Flag</label>
+                <label class="form-label mb-0 small text-muted">Fascia</label>
                 <select class="form-select form-select-sm" style="width:140px" bind:value={editingValue.flag_id}>
                   <option value={null}>— nessuna fascia —</option>
                   {#each fasceDisponibili(sg, g.id, flagTurno) as f}
@@ -3188,7 +3188,7 @@
               <input class="form-control form-control-sm" use:autowidth placeholder="Sigla"
                      bind:value={nuovoGruppo.sigla}
                      on:keydown={e => e.key === 'Enter' && addGruppo(sg.id)} />
-              <label class="form-label mb-0 small text-muted">Flag</label>
+              <label class="form-label mb-0 small text-muted">Fascia</label>
               <select class="form-select form-select-sm" style="width:140px" bind:value={nuovoGruppo.flag_id}>
                 <option value={null}>— nessuna fascia —</option>
                 {#each fasceDisponibili(sg, null, flagTurno) as f}

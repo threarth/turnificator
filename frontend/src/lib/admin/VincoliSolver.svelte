@@ -308,19 +308,19 @@
 </table>
 </div>
 
-<!-- ═══════════════ LIMITI MENSILI (flag + qualitativo) ═══════════════ -->
+<!-- ═══════════════ LIMITI MENSILI (fascia oraria + qualitativo) ═══════════════ -->
 <div bind:this={solverRoot}>
 
-<!-- Limiti mensili max per caratteristica temporale -->
+<!-- Limiti mensili max per fascia oraria -->
 <h6 class="mt-3 mb-2" style="font-size:.85rem">
-  Limiti mensili max per caratteristica temporale
+  Limiti mensili max per fascia oraria
   <button class="btn btn-sm btn-outline-primary ms-2" onclick={() => addVincoloSolver('flag')}>
     <i class="bi bi-plus me-1"></i>Aggiungi
   </button>
 </h6>
 {#if vincoliSolver.filter(v => v.tipo === 'flag').length}
   <table class="table table-sm table-hover mb-2" style="font-size:.85rem">
-    <thead><tr><th>Flag</th><th style="width:80px">Max N</th><th style="width:50px">Attivo</th><th style="width:80px"></th></tr></thead>
+    <thead><tr><th>Fascia oraria</th><th style="width:80px">Max N</th><th style="width:50px">Attivo</th><th style="width:80px"></th></tr></thead>
     <tbody>
     {#each vincoliSolver as vs, i}
       {#if vs.tipo === 'flag'}
@@ -328,7 +328,7 @@
           <tr class="table-warning" onkeydown={e => handleKeyEdit(e, salvaEditSolver, cancelEditSolver)}>
             <td>
               <select class="form-select form-select-sm" bind:value={editingSolver.ref_id}>
-                <option value={null}>— seleziona flag —</option>
+                <option value={null}>— scegli una fascia —</option>
                 {#each flagTurno.filter(f => f.mostra_in_struttura) as f}
                   <option value={f.id}>{f.nome}{f.parent_nome ? ` (${f.parent_nome})` : ''}</option>
                 {/each}
@@ -359,7 +359,7 @@
     </tbody>
   </table>
 {:else}
-  <div class="text-muted small mb-2">Nessun limite flag configurato.</div>
+  <div class="text-muted small mb-2">Nessun limite per fascia oraria.</div>
 {/if}
 
 <!-- Limiti mensili max per caratteristica qualitativa -->
@@ -426,7 +426,7 @@
   <div style="max-height:500px;overflow-y:auto" bind:this={vincoliRoot}>
   <table class="table table-sm table-hover mb-0" style="font-size:.8rem">
     <thead class="table-light"><tr>
-      <th>Utente</th><th>Vincoli override</th><th>Limiti flag/tipo</th><th>Giorni esclusi</th>
+      <th>Utente</th><th>Vincoli override</th><th>Limiti per fascia o tipo</th><th>Giorni esclusi</th>
     </tr></thead>
     <tbody>
     {#each solverUtentiRiepilogo as u}
@@ -491,11 +491,11 @@
             </table>
           {:else}<div class="text-muted small mb-2">Nessun override.</div>{/if}
 
-          <!-- Limiti flag/tipo -->
+          <!-- Limiti per fascia o tipo -->
           <div class="d-flex align-items-center gap-2 mb-1">
-            <strong class="small">Limiti flag/tipo</strong>
+            <strong class="small">Limiti per fascia o tipo</strong>
             <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.75rem" onclick={() => addVincoloSolverUtente('flag')}>
-              <i class="bi bi-plus"></i> Flag
+              <i class="bi bi-plus"></i> Fascia
             </button>
             <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.75rem" onclick={() => addVincoloSolverUtente('qualitativo')}>
               <i class="bi bi-plus"></i> Tipo
@@ -507,7 +507,7 @@
               <tbody>
               {#each editVincoliSolverUtente as vsu, i}
                 <tr>
-                  <td class="small">{vsu.tipo === 'flag' ? 'Flag' : 'Qual.'}</td>
+                  <td class="small">{vsu.tipo === 'flag' ? 'Fascia' : 'Tipo'}</td>
                   <td>
                     {#if vsu.tipo === 'flag'}
                       <select class="form-select form-select-sm" style="font-size:.8rem" bind:value={vsu.ref_id}>
