@@ -450,6 +450,7 @@ def _migra_colonne(db):
     # inseriscono e leggono le colonne appena aggiunte.
     _rimuovi_concetto_composto(db)
     _inserisci_flag_default(db)
+    _nascondi_assenze_dalla_struttura(db)
     _migra_gruppi_su_fasce(db)
     ricalcola_tutte(db)
     _crea_indice_fascia_unica(db)
@@ -464,6 +465,30 @@ def _migra_colonne(db):
                 log.info('Rinominata colonna %s.peso_solver → peso_priorita_solver', tabella)
         except Exception as e:
             log.warning('Rinomina peso_solver in %s fallita: %s', tabella, e)
+
+
+def _nascondi_assenze_dalla_struttura(db):
+    """
+    Riporta a zero la visibilita' in struttura turni di tutti i flag assenza.
+
+    Un'assenza non e' una fascia oraria: non ha orari e non puo' diventare il
+    gruppo di un sovragruppo. Le route la scrivono gia' a zero, ma un tenant
+    creato prima di questo vincolo puo' avere assenze visibili.
+
+    Idempotente: dopo il primo giro la UPDATE non trova piu' righe.
+    """
+    try:
+        nascoste = db.execute(
+            "UPDATE flag_turno SET mostra_in_struttura = 0 "
+            "WHERE tipo = 'assenza' AND mostra_in_struttura != 0"
+        ).rowcount
+        db.commit()
+
+        if nascoste:
+            log.info('Tolte dalla struttura turni %d assenze visibili', nascoste)
+    except Exception as e:
+        db.rollback()
+        log.warning('Nascondere le assenze dalla struttura turni e\' fallito: %s', e)
 
 
 def _rimuovi_concetto_composto(db):

@@ -178,6 +178,45 @@ def test_pausa_non_dichiarata_prende_il_default(client, admin_token, auth):
 
 
 # ---------------------------------------------------------------------------
+# Le assenze non entrano nella struttura turni
+# ---------------------------------------------------------------------------
+
+def test_assenza_creata_non_e_in_struttura(client, admin_token, auth):
+    """Un'assenza non e' una fascia: la visibilita' richiesta viene ignorata."""
+    rv = client.post(
+        '/api/admin/flag-turno',
+        json={'nome': 'aspettativa', 'tipo': 'assenza', 'mostra_in_struttura': True},
+        headers=auth(admin_token)
+    )
+    assert rv.status_code == 201, rv.get_json()
+
+    assert _flag_per_nome(client, admin_token, auth, 'aspettativa')['mostra_in_struttura'] == 0
+
+
+def test_riclassificare_come_assenza_toglie_dalla_struttura(client, admin_token, auth):
+    """Una fascia che diventa assenza esce dalla struttura turni."""
+    mattina = _flag_per_nome(client, admin_token, auth, FASCIA_MATTINA)
+    assert mattina['mostra_in_struttura'] == 1
+
+    rv = client.put(
+        f"/api/admin/flag-turno/{mattina['id']}",
+        json={'tipo': 'assenza'}, headers=auth(admin_token)
+    )
+    assert rv.status_code == 200, rv.get_json()
+
+    assert _flag_per_nome(client, admin_token, auth, FASCIA_MATTINA)['mostra_in_struttura'] == 0
+
+
+def test_assenze_default_fuori_dalla_struttura(client, admin_token, auth):
+    """Nessuna delle assenze di serie e' agganciabile a un gruppo."""
+    rv = client.get('/api/admin/flag-turno', headers=auth(admin_token))
+    assenze = [f for f in rv.get_json()['flags'] if f['tipo'] == 'assenza']
+
+    assert assenze
+    assert all(f['mostra_in_struttura'] == 0 for f in assenze)
+
+
+# ---------------------------------------------------------------------------
 # Una fascia oraria per struttura
 # ---------------------------------------------------------------------------
 

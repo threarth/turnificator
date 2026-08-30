@@ -96,8 +96,9 @@ COLONNE_FLAG = (
 )
 
 # Valori ammessi dalla colonna flag_turno.tipo.
-TIPI_FLAG = ('lavorativo', 'assenza')
+TIPO_FLAG_ASSENZA = 'assenza'
 TIPO_FLAG_DEFAULT = 'lavorativo'
+TIPI_FLAG = (TIPO_FLAG_DEFAULT, TIPO_FLAG_ASSENZA)
 
 
 def _normalizza_orario(valore):
@@ -175,6 +176,32 @@ def _normalizza_tipo(valore, default=TIPO_FLAG_DEFAULT):
     return valore if valore in TIPI_FLAG else default
 
 
+def _visibilita_in_struttura(dati, tipo, corrente=1):
+    """
+    Decide se il flag compare fra le fasce agganciabili ai gruppi.
+
+    Un'assenza non e' una fascia oraria e non entra mai nella struttura
+    turni: non e' una scelta dell'utente, e il vincolo vale anche quando un
+    flag lavorativo viene riclassificato come assenza.
+
+    Args:
+        dati (dict): payload della richiesta.
+        tipo (str): tipo del flag, gia' normalizzato.
+        corrente (int): valore attuale, usato come default sulla PUT.
+
+    Returns:
+        int: 0 oppure 1.
+    """
+    if tipo == TIPO_FLAG_ASSENZA:
+        return 0
+
+    richiesto = dati.get('mostra_in_struttura')
+    if richiesto is None:
+        return int(bool(corrente))
+
+    return int(bool(richiesto))
+
+
 @bp.route('/flag-turno', methods=['GET'])
 @require_role('admin', 'manager')
 def lista_flag_turno():
@@ -214,6 +241,8 @@ def crea_flag_turno():
     if errore:
         return jsonify({'ok': False, 'errore': errore}), 400
 
+    tipo = _normalizza_tipo(dati.get('tipo'))
+
     cur = execute_write(
         "INSERT INTO flag_turno (nome, parent_id, descrizione, "
         "orario_inizio, orario_fine, pausa_minuti, "
@@ -224,8 +253,7 @@ def crea_flag_turno():
          orari['orario_inizio'], orari['orario_fine'], orari['pausa_minuti'],
          dati.get('peso_turno'), dati.get('ore_turno'),
          dati.get('ore_primo_giorno'), dati.get('ore_ultimo_giorno'),
-         int(bool(dati.get('mostra_in_struttura', True))),
-         _normalizza_tipo(dati.get('tipo')))
+         _visibilita_in_struttura(dati, tipo), tipo)
     )
 
     ricalcola_tutte(get_db())
@@ -242,11 +270,8 @@ def modifica_flag_turno(fid):
         return jsonify({'ok': False, 'errore': 'Flag non trovato.'}), 404
 
     dati = request.get_json(silent=True) or {}
-    mostra = dati.get('mostra_in_struttura')
-    if mostra is not None:
-        mostra = int(bool(mostra))
-    else:
-        mostra = f.get('mostra_in_struttura', 1)
+    tipo = _normalizza_tipo(dati.get('tipo'), f.get('tipo', TIPO_FLAG_DEFAULT))
+    mostra = _visibilita_in_struttura(dati, tipo, f.get('mostra_in_struttura', 1))
 
     nuovo_nome = (dati.get('nome') or '').strip().lower() or f['nome']
     if nuovo_nome != f['nome']:
@@ -272,8 +297,7 @@ def modifica_flag_turno(fid):
             dati.get('ore_turno', f.get('ore_turno')),
             dati.get('ore_primo_giorno', f.get('ore_primo_giorno')),
             dati.get('ore_ultimo_giorno', f.get('ore_ultimo_giorno')),
-            mostra, _normalizza_tipo(dati.get('tipo'), f.get('tipo', TIPO_FLAG_DEFAULT)),
-            fid
+            mostra, tipo, fid
         )
     )
 

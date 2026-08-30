@@ -10,6 +10,7 @@
   } from '$lib/admin/actions.js';
   import DeleteButton from '$lib/admin/DeleteButton.svelte';
   import FlagRow from '$lib/admin/FlagRow.svelte';
+  import FlagForm from '$lib/admin/FlagForm.svelte';
   import { decToHm, hmToDec } from '$lib/admin/durate.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
   import EditableTable from '$lib/admin/EditableTable.svelte';
@@ -117,8 +118,13 @@
   let nuovaRegola = { ...REGOLA_VUOTA };
 
   // ── Flag turno (globali) ──────────────────────────────────────
+  // Pausa obbligatoria di default, in minuti: si somma alla durata netta.
+  const PAUSA_DEFAULT_MINUTI = 10;
+
   let flagTurno       = [];
-  let showAddFlag     = false;
+  // Tipo del flag in creazione ('lavorativo' | 'assenza'), null se il form
+  // e' chiuso: distingue quale delle due tabelle mostra il form.
+  let showAddFlag     = null;
   let editingFlag     = null;
   let nuovoFlag       = flagVuoto();
   let collapsedFlags  = new Set();
@@ -739,14 +745,11 @@
   }
 
   // ── Flag turno ───────────────────────────────────────────────
-  // Pausa obbligatoria di default, in minuti: si somma alla durata netta.
-  const PAUSA_DEFAULT_MINUTI = 10;
-
   // Stato iniziale del form "nuovo flag". I campi con underscore sono le
   // durate in h:mm digitate dall'utente, convertite in decimali al salvataggio.
-  function flagVuoto(parentId = null) {
+  function flagVuoto(parentId = null, tipo = 'lavorativo') {
     return {
-      nome: '', descrizione: '', parent_id: parentId, tipo: 'lavorativo',
+      nome: '', descrizione: '', parent_id: parentId, tipo,
       orario_inizio: '', orario_fine: '', pausa_minuti: PAUSA_DEFAULT_MINUTI,
       peso_turno: null, _ore_turno: '', _ore_primo: '', _ore_ultimo: '',
     };
@@ -764,9 +767,24 @@
     return payload;
   }
 
-  function addChildFlag(parentId) {
-    nuovoFlag = flagVuoto(parentId);
-    showAddFlag = true;
+  // Apre o chiude le fasce di un concetto nella tabella.
+  function toggleCollapseFlag(id) {
+    if (collapsedFlags.has(id)) collapsedFlags.delete(id);
+    else collapsedFlags.add(id);
+    collapsedFlags = collapsedFlags;
+  }
+
+  // Apre il form di creazione nella tabella del tipo indicato, o lo richiude.
+  function apriNuovoFlag(tipo) {
+    if (showAddFlag === tipo) { showAddFlag = null; return; }
+    nuovoFlag = flagVuoto(null, tipo);
+    showAddFlag = tipo;
+  }
+
+  // Una fascia nasce sotto il concetto da cui eredita il tipo.
+  function addChildFlag(concetto) {
+    nuovoFlag = flagVuoto(concetto.id, concetto.tipo || 'lavorativo');
+    showAddFlag = nuovoFlag.tipo;
   }
   function startEditFlag(f) {
     editingFlag = {
@@ -783,8 +801,8 @@
     const r = await adminApi.creaFlagTurno(payloadFlag(nuovoFlag));
     if (r.ok) {
       flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
+      showAddFlag = null;
       nuovoFlag = flagVuoto();
-      showAddFlag = false;
       setMsg('cfg', 'Flag creato.');
     } else setMsg('cfg', r.errore, false);
   }
@@ -848,6 +866,9 @@
 
   // Helper: flag radice e figli per organizzazione gerarchica
   $: flagRadice = flagTurno.filter(f => !f.parent_id);
+  // Le assenze non sono fasce orarie: vivono in una tabella separata.
+  $: concettiLavorativi = flagRadice.filter(f => (f.tipo || 'lavorativo') !== 'assenza');
+  $: concettiAssenza    = flagRadice.filter(f => f.tipo === 'assenza');
   $: flagFigli  = (parentId) => flagTurno.filter(f => f.parent_id === parentId);
   // Flag ordinati padre→figli per i <select>
   $: flagOrdinati = flagRadice.flatMap(r => [r, ...flagTurno.filter(f => f.parent_id === r.id)]);
@@ -2043,57 +2064,26 @@
   {:else if tab === 'configurazione'}
     {#if msgConfig}<div class="alert py-2 small {msgConfig.startsWith('✓')?'alert-success':'alert-danger'}">{msgConfig}</div>{/if}
 
-    <!-- ═══ 1. Flag Globali ═══ -->
+    <!-- ═══ 1a. Fasce orarie ═══ -->
     <div class="card mb-4" style="max-width:1240px">
       <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-        Tipi turno/assenze per caratteristica temporale
+        Fasce orarie dei turni
         <div class="d-flex gap-2">
           <button class="btn btn-sm btn-outline-secondary" on:click={ripristinaFlagDefault}>
             <i class="bi bi-arrow-counterclockwise me-1"></i>Ripristina default
           </button>
-          <button class="btn btn-sm btn-outline-primary" on:click={() => { showAddFlag = !showAddFlag; }}>
-            <i class="bi bi-plus me-1"></i>Nuovo flag
+          <button class="btn btn-sm btn-outline-primary" on:click={() => apriNuovoFlag('lavorativo')}>
+            <i class="bi bi-plus me-1"></i>Nuova fascia
           </button>
         </div>
       </div>
       <div class="card-body p-2">
-        {#if showAddFlag}
-          <div class="d-flex gap-2 mb-2 align-items-center flex-wrap">
-            <input class="form-control form-control-sm" use:focusOnMount placeholder="Nome"
-                   bind:value={nuovoFlag.nome} style="width:150px"
-                   on:keydown={e => e.key === 'Enter' && creaFlag()} />
-            <input class="form-control form-control-sm" placeholder="Descrizione"
-                   bind:value={nuovoFlag.descrizione} style="width:150px"
-                   on:keydown={e => e.key === 'Enter' && creaFlag()} />
-            <select class="form-select form-select-sm" style="width:130px" bind:value={nuovoFlag.parent_id}>
-              <option value={null}>— concetto radice —</option>
-              {#each flagRadice as fr}
-                <option value={fr.id}>{fr.nome}</option>
-              {/each}
-            </select>
-            <input class="form-control form-control-sm" placeholder="Inizio" bind:value={nuovoFlag.orario_inizio} style="width:75px"
-                   on:keydown={e => e.key === 'Enter' && creaFlag()} />
-            <input class="form-control form-control-sm" placeholder="Fine" bind:value={nuovoFlag.orario_fine} style="width:75px"
-                   on:keydown={e => e.key === 'Enter' && creaFlag()} />
-            <input class="form-control form-control-sm" type="number" min="0" title="Pausa obbligatoria (minuti)"
-                   placeholder="Pausa" bind:value={nuovoFlag.pausa_minuti} style="width:70px" />
-            {#if !nuovoFlag.parent_id}
-              <select class="form-select form-select-sm" style="width:110px" bind:value={nuovoFlag.tipo}>
-                <option value="lavorativo">lavorativo</option>
-                <option value="assenza">assenza</option>
-              </select>
-            {/if}
-            <input class="form-control form-control-sm" placeholder="1° (h:mm)" bind:value={nuovoFlag._ore_primo} style="width:70px" />
-            <input class="form-control form-control-sm" placeholder="Ult (h:mm)" bind:value={nuovoFlag._ore_ultimo} style="width:70px" />
-            <button class="btn btn-success btn-sm" on:click={creaFlag}><i class="bi bi-check-lg"></i></button>
-            <button class="btn btn-secondary btn-sm" on:click={() => { showAddFlag = false; nuovoFlag = flagVuoto(); }}><i class="bi bi-x"></i></button>
-          </div>
-          <div class="form-text small mb-2">
-            Ore, durata e peso non si digitano: li ricava il sistema dagli orari e dalla pausa.
-          </div>
+        {#if showAddFlag === 'lavorativo'}
+          <FlagForm bind:flag={nuovoFlag} concetti={concettiLavorativi}
+                    oncreate={creaFlag} oncancel={() => showAddFlag = null} />
         {/if}
-        {#if flagTurno.length === 0}
-          <div class="text-muted small text-center py-3">Nessun flag definito. Crea i flag di base per abilitare la configurazione.</div>
+        {#if concettiLavorativi.length === 0}
+          <div class="text-muted small text-center py-3">Nessuna fascia definita. Ripristina i default per abilitare la configurazione.</div>
         {:else}
           <table class="table table-sm table-hover table-config table-config-fixed mb-0" style="font-size:.85rem">
             <thead><tr>
@@ -2113,24 +2103,78 @@
               <th style="width:60px"></th>
             </tr></thead>
             <tbody>
-            {#each flagRadice as fr (fr.id)}
+            {#each concettiLavorativi as fr (fr.id)}
               {@const figli = flagFigli(fr.id)}
               {@const espanso = !collapsedFlags.has(fr.id)}
               <FlagRow flag={fr} haFigli={figli.length > 0} {espanso}
                        bind:editing={editingFlag} {autoFocus}
-                       ontogglecollapse={() => {
-                         if (collapsedFlags.has(fr.id)) collapsedFlags.delete(fr.id);
-                         else collapsedFlags.add(fr.id);
-                         collapsedFlags = collapsedFlags;
-                       }}
+                       ontogglecollapse={() => toggleCollapseFlag(fr.id)}
                        onstartedit={e => startEditFromRow(e, () => startEditFlag(fr))}
                        onsave={salvaFlag}
                        oncancel={() => editingFlag = null}
                        ondelete={() => eliminaFlag(fr.id)}
-                       onaddchild={() => addChildFlag(fr.id)} />
+                       onaddchild={() => addChildFlag(fr)} />
               {#if espanso}
                 {#each figli as fc (fc.id)}
                   <FlagRow flag={fc} figlio parentNome={fr.nome}
+                           bind:editing={editingFlag} {autoFocus}
+                           onstartedit={e => startEditFromRow(e, () => startEditFlag(fc))}
+                           onsave={salvaFlag}
+                           oncancel={() => editingFlag = null}
+                           ondelete={() => eliminaFlag(fc.id)} />
+                {/each}
+              {/if}
+            {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
+    </div>
+
+    <!-- ═══ 1b. Assenze ═══ -->
+    <div class="card mb-4" style="max-width:820px">
+      <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        Assenze
+        <button class="btn btn-sm btn-outline-primary" on:click={() => apriNuovoFlag('assenza')}>
+          <i class="bi bi-plus me-1"></i>Nuovo tipo di assenza
+        </button>
+      </div>
+      <div class="card-body p-2">
+        <div class="form-text small mb-2">
+          Un'assenza non ha orari: non è una fascia oraria, e non entra nella struttura turni.
+        </div>
+        {#if showAddFlag === 'assenza'}
+          <FlagForm bind:flag={nuovoFlag} concetti={[]} assenza
+                    oncreate={creaFlag} oncancel={() => showAddFlag = null} />
+        {/if}
+        {#if concettiAssenza.length === 0}
+          <div class="text-muted small text-center py-3">Nessuna assenza definita.</div>
+        {:else}
+          <table class="table table-sm table-hover table-config table-config-fixed mb-0" style="font-size:.85rem">
+            <thead><tr>
+              <th style="width:110px">Nome</th>
+              <th style="width:160px">Descrizione</th>
+              <th style="width:80px">Concetto</th>
+              <th style="width:60px" title="Ore giustificate">Ore</th>
+              <th style="width:60px">1°</th>
+              <th style="width:60px">Ult.</th>
+              <th style="width:90px">Tipo</th>
+              <th style="width:60px"></th>
+            </tr></thead>
+            <tbody>
+            {#each concettiAssenza as fr (fr.id)}
+              {@const figli = flagFigli(fr.id)}
+              {@const espanso = !collapsedFlags.has(fr.id)}
+              <FlagRow flag={fr} assenza haFigli={figli.length > 0} {espanso}
+                       bind:editing={editingFlag} {autoFocus}
+                       ontogglecollapse={() => toggleCollapseFlag(fr.id)}
+                       onstartedit={e => startEditFromRow(e, () => startEditFlag(fr))}
+                       onsave={salvaFlag}
+                       oncancel={() => editingFlag = null}
+                       ondelete={() => eliminaFlag(fr.id)} />
+              {#if espanso}
+                {#each figli as fc (fc.id)}
+                  <FlagRow flag={fc} assenza figlio parentNome={fr.nome}
                            bind:editing={editingFlag} {autoFocus}
                            onstartedit={e => startEditFromRow(e, () => startEditFlag(fc))}
                            onsave={salvaFlag}
