@@ -23,7 +23,7 @@
     import { focusOnMount } from './actions.js';
     import DeleteButton from './DeleteButton.svelte';
     import { minToHm } from './durate.js';
-    import { costruisciStruttura } from './struttura.js';
+    import { costruisciStruttura, nomeDuplicato } from './struttura.js';
 
     export let fasce = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
@@ -49,11 +49,9 @@
         { singolare: 'Struttura',   plurale: 'Strutture' },
     ];
 
-    const PASSI = [
-        'Fasce orarie',
-        'Le tue strutture',
-        'I turni',
-    ];
+    // Il secondo passo prende il nome dalla parola scelta dall'utente: cosi'
+    // la scelta si vede confermata subito nell'intestazione.
+    $: passi = ['Fasce orarie', etichetta.plurale, 'I turni'];
 
     let passo = 0;
     let errore = '';
@@ -177,6 +175,44 @@
         strutture = [...strutture];
     }
 
+    /**
+     * Aggiunge sotto al turno una sua copia, nella fascia indicata.
+     *
+     * Serve a due gesti diversi con lo stesso pulsante: sfornare i turni di
+     * una serie nella stessa fascia (DEA1, DEA2) e portare un turno in
+     * un'altra fascia (TC mattina, TC pomeriggio). Il nome proposto segue il
+     * gesto, e resta comunque modificabile.
+     *
+     * @param indiceStruttura — struttura a cui appartiene il turno
+     * @param indiceTurno — posizione del turno da duplicare
+     * @param flagId — fascia della copia; se omessa, la stessa dell'originale
+     */
+    function duplicaTurno(indiceStruttura, indiceTurno, flagId = null) {
+        const struttura = strutture[indiceStruttura];
+        const originale = struttura.turni[indiceTurno];
+        const fasciaCopia = flagId ?? originale.flag_id;
+
+        const copia = {
+            nome: nomeDuplicato(
+                originale.nome,
+                nomeFascia(originale.flag_id),
+                nomeFascia(fasciaCopia)
+            ),
+            flag_id: fasciaCopia,
+        };
+
+        struttura.turni = [
+            ...struttura.turni.slice(0, indiceTurno + 1),
+            copia,
+            ...struttura.turni.slice(indiceTurno + 1),
+        ];
+        strutture = [...strutture];
+    }
+
+    function nomeFascia(flagId) {
+        return fasce.find(f => f.id === flagId)?.nome ?? '';
+    }
+
     function rimuoviTurno(indiceStruttura, indiceTurno) {
         const struttura = strutture[indiceStruttura];
         struttura.turni = struttura.turni.filter((_, i) => i !== indiceTurno);
@@ -233,215 +269,430 @@
     }
 </script>
 
-<div class="card" style="max-width:960px">
-    <div class="card-header d-flex align-items-center justify-content-between">
-        <span class="fw-semibold"><i class="bi bi-magic me-2"></i>Procedura guidata</span>
-        <button class="btn btn-sm btn-outline-secondary" on:click={onannulla}>
-            <i class="bi bi-x-lg me-1"></i>Esci
-        </button>
+<div class="guidata card">
+    <div class="card-header d-flex align-items-center justify-content-between py-3">
+        <div>
+            <div class="fw-semibold"><i class="bi bi-compass me-2"></i>Procedura guidata</div>
+            <div class="text-muted small">Tre passi per costruire una struttura turni da zero. Quelle che hai già restano come sono.</div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" on:click={onannulla}>Esci</button>
     </div>
 
-    <div class="card-body">
-        <!-- Avanzamento -->
-        <div class="d-flex gap-2 mb-4">
-            {#each PASSI as nome, i}
-                <div class="flex-fill text-center small pb-1 border-bottom border-3
-                            {i === passo ? 'border-primary fw-semibold text-primary'
-                             : i < passo ? 'border-success text-success' : 'border-light text-muted'}">
-                    {#if i < passo}<i class="bi bi-check-lg me-1"></i>{/if}{nome}
-                </div>
-            {/each}
-        </div>
+    <!-- I passi sono numerati perche' sono davvero in sequenza: non si
+         collocano i turni prima di avere le fasce e le strutture. -->
+    <nav class="guidata-passi d-flex" aria-label="Avanzamento">
+        {#each passi as nome, i}
+            <div class="guidata-passo flex-fill d-flex align-items-center gap-2 px-3 py-2
+                        {i === passo ? 'corrente' : i < passo ? 'fatto' : 'futuro'}">
+                <span class="guidata-numero">
+                    {#if i < passo}<i class="bi bi-check-lg"></i>{:else}{i + 1}{/if}
+                </span>
+                <span class="small">{nome}</span>
+            </div>
+        {/each}
+    </nav>
 
+    <div class="card-body">
         {#if errore}
             <div class="alert alert-danger py-2 small">{errore}</div>
         {/if}
 
         <!-- ═══ Passo 1: fasce orarie ═══ -->
         {#if passo === 0}
-            <p class="text-muted small">
-                Una fascia oraria dice quando comincia e quando finisce un turno.
-                Le ore e il peso li calcola il sistema dagli orari. Le fasce valgono
-                per tutta l'installazione: quelle che vedi qui sono già disponibili.
+            <p class="guidata-intro">
+                Una fascia oraria è l'orario di un turno: da che ora a che ora.
+                Bastano quelli — durata, ore e peso li ricava il programma da sé.
             </p>
 
-            <table class="table table-sm align-middle" style="font-size:.85rem">
-                <thead><tr>
-                    <th style="width:150px">Fascia</th>
-                    <th style="width:110px">Categoria</th>
-                    <th style="width:90px">Inizio</th>
-                    <th style="width:90px">Fine</th>
-                    <th style="width:90px">Pausa</th>
-                    <th style="width:80px">Durata</th>
-                    <th style="width:70px"></th>
-                </tr></thead>
-                <tbody>
-                    {#each fasceDisponibili as f (f.id)}
-                        {@const modifica = modificheFasce[f.id]}
-                        <tr>
-                            <td class="fw-semibold">{f.nome}</td>
-                            <td class="small text-muted">{f.parent_nome || '—'}</td>
-                            <td><input class="form-control form-control-sm"
-                                       value={modifica?.orario_inizio ?? f.orario_inizio ?? ''}
-                                       on:input={e => modificaFascia(f, 'orario_inizio', e.target.value)} /></td>
-                            <td><input class="form-control form-control-sm"
-                                       value={modifica?.orario_fine ?? f.orario_fine ?? ''}
-                                       on:input={e => modificaFascia(f, 'orario_fine', e.target.value)} /></td>
-                            <td><input class="form-control form-control-sm" type="number" min="0"
-                                       value={modifica?.pausa_minuti ?? f.pausa_minuti ?? 0}
-                                       on:input={e => modificaFascia(f, 'pausa_minuti', e.target.value)} /></td>
-                            <td class="small text-muted">{minToHm(f.durata_totale_minuti) || '—'}</td>
-                            <td>
-                                {#if modifica}
-                                    <button class="btn btn-success btn-sm py-0" on:click={() => salvaFascia(f)}>
-                                        <i class="bi bi-check-lg"></i>
-                                    </button>
-                                {/if}
-                            </td>
-                        </tr>
-                    {/each}
-                </tbody>
-            </table>
+            <section class="guidata-sezione">
+                <h6 class="guidata-titolo">Le fasce già disponibili</h6>
+                <p class="guidata-aiuto">
+                    Se un orario non corrisponde ai tuoi turni, correggilo qui.
+                    Le fasce sono in comune: la correzione vale per ogni struttura
+                    turni, non solo per quella che stai creando.
+                </p>
 
-            <div class="border-top pt-3 mt-2">
-                <div class="small fw-semibold mb-2">Aggiungi una fascia</div>
-                <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <input class="form-control form-control-sm" style="width:160px" placeholder="Nome (es. sera)"
-                           bind:value={nuovaFascia.nome} />
-                    <select class="form-select form-select-sm" style="width:150px" bind:value={nuovaFascia.parent_id}>
-                        {#each concetti as c}
-                            <option value={c.id}>{c.nome}</option>
+                <table class="table table-sm align-middle mb-0">
+                    <thead><tr>
+                        <th style="width:150px">Fascia</th>
+                        <th style="width:120px">Categoria</th>
+                        <th style="width:100px">Inizio</th>
+                        <th style="width:100px">Fine</th>
+                        <th style="width:100px">Pausa (min)</th>
+                        <th style="width:90px">Durata</th>
+                        <th style="width:70px"></th>
+                    </tr></thead>
+                    <tbody>
+                        {#each fasceDisponibili as f (f.id)}
+                            {@const modifica = modificheFasce[f.id]}
+                            <tr class:table-warning={modifica}>
+                                <td class="fw-semibold">{f.nome}</td>
+                                <td class="small text-muted">{f.parent_nome || '—'}</td>
+                                <td><input class="form-control form-control-sm" aria-label="Inizio di {f.nome}"
+                                           value={modifica?.orario_inizio ?? f.orario_inizio ?? ''}
+                                           on:input={e => modificaFascia(f, 'orario_inizio', e.target.value)} /></td>
+                                <td><input class="form-control form-control-sm" aria-label="Fine di {f.nome}"
+                                           value={modifica?.orario_fine ?? f.orario_fine ?? ''}
+                                           on:input={e => modificaFascia(f, 'orario_fine', e.target.value)} /></td>
+                                <td><input class="form-control form-control-sm" type="number" min="0"
+                                           aria-label="Pausa di {f.nome}"
+                                           value={modifica?.pausa_minuti ?? f.pausa_minuti ?? 0}
+                                           on:input={e => modificaFascia(f, 'pausa_minuti', e.target.value)} /></td>
+                                <td class="small text-muted">{minToHm(f.durata_totale_minuti) || '—'}</td>
+                                <td>
+                                    {#if modifica}
+                                        <button class="btn btn-warning btn-sm py-0" on:click={() => salvaFascia(f)}>
+                                            Salva
+                                        </button>
+                                    {/if}
+                                </td>
+                            </tr>
                         {/each}
-                    </select>
-                    <input class="form-control form-control-sm" style="width:90px" placeholder="Inizio"
-                           bind:value={nuovaFascia.orario_inizio} />
-                    <input class="form-control form-control-sm" style="width:90px" placeholder="Fine"
-                           bind:value={nuovaFascia.orario_fine} />
-                    <input class="form-control form-control-sm" style="width:90px" type="number" min="0"
-                           title="Pausa obbligatoria (minuti)" bind:value={nuovaFascia.pausa_minuti} />
-                    <button class="btn btn-primary btn-sm" disabled={!nuovaFasciaCompleta} on:click={aggiungiFascia}>
-                        <i class="bi bi-plus-lg me-1"></i>Aggiungi
-                    </button>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="guidata-sezione guidata-inserimento">
+                <h6 class="guidata-titolo">Aggiungi una fascia</h6>
+                <div class="row g-3 align-items-end">
+                    <div class="col-auto" style="width:180px">
+                        <label class="form-label" for="fascia-nome">Nome</label>
+                        <input id="fascia-nome" class="form-control form-control-sm"
+                               placeholder="es. sera" bind:value={nuovaFascia.nome} />
+                    </div>
+                    <div class="col-auto" style="width:170px">
+                        <label class="form-label" for="fascia-categoria">Categoria</label>
+                        <select id="fascia-categoria" class="form-select form-select-sm" bind:value={nuovaFascia.parent_id}>
+                            {#each concetti as c}
+                                <option value={c.id}>{c.nome}</option>
+                            {/each}
+                        </select>
+                    </div>
+                    <div class="col-auto" style="width:110px">
+                        <label class="form-label" for="fascia-inizio">Inizio</label>
+                        <input id="fascia-inizio" class="form-control form-control-sm"
+                               placeholder="16:00" bind:value={nuovaFascia.orario_inizio} />
+                    </div>
+                    <div class="col-auto" style="width:110px">
+                        <label class="form-label" for="fascia-fine">Fine</label>
+                        <input id="fascia-fine" class="form-control form-control-sm"
+                               placeholder="22:20" bind:value={nuovaFascia.orario_fine} />
+                    </div>
+                    <div class="col-auto" style="width:110px">
+                        <label class="form-label" for="fascia-pausa">Pausa (min)</label>
+                        <input id="fascia-pausa" class="form-control form-control-sm" type="number" min="0"
+                               bind:value={nuovaFascia.pausa_minuti} />
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-primary btn-sm" disabled={!nuovaFasciaCompleta} on:click={aggiungiFascia}>
+                            Aggiungi la fascia
+                        </button>
+                    </div>
                 </div>
-                <div class="form-text small">
-                    La categoria dice se la fascia è diurna, notturna o una guardia:
-                    da lì discendono le regole sul riposo dopo la notte.
-                </div>
-            </div>
+                <p class="guidata-aiuto mt-2 mb-0">
+                    La categoria dice se la fascia è diurna, notturna o di guardia.
+                    Il programma la usa per applicare le regole da sé: dopo una
+                    notte, per esempio, il riposo del giorno dopo è obbligatorio.
+                </p>
+            </section>
         {/if}
 
         <!-- ═══ Passo 2: le strutture ═══ -->
         {#if passo === 1}
-            <p class="text-muted small">
-                Come chiami i luoghi in cui si svolgono i turni? La parola che scegli
-                verrà usata dal resto del programma.
+            <p class="guidata-intro">
+                I turni si svolgono in un luogo: un reparto, un ambulatorio, un
+                presidio. Scegli la parola che usate voi — da qui in avanti il
+                programma userà quella.
             </p>
 
-            <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
-                {#each ETICHETTE_SUGGERITE as e}
-                    <button class="btn btn-sm {!etichettaLibera && etichetta.singolare === e.singolare
-                                               ? 'btn-primary' : 'btn-outline-secondary'}"
-                            on:click={() => scegliEtichetta(e)}>{e.plurale}</button>
-                {/each}
-                <button class="btn btn-sm {etichettaLibera ? 'btn-primary' : 'btn-outline-secondary'}"
-                        on:click={() => scegliEtichetta(null)}>Altro…</button>
-            </div>
-
-            {#if etichettaLibera}
-                <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
-                    <input class="form-control form-control-sm" style="width:180px" placeholder="Singolare"
-                           bind:value={etichetta.singolare} />
-                    <input class="form-control form-control-sm" style="width:180px" placeholder="Plurale"
-                           bind:value={etichetta.plurale} />
+            <section class="guidata-sezione">
+                <h6 class="guidata-titolo">Come li chiami</h6>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    {#each ETICHETTE_SUGGERITE as e}
+                        <button class="btn btn-sm {!etichettaLibera && etichetta.singolare === e.singolare
+                                                   ? 'btn-primary' : 'btn-outline-secondary'}"
+                                on:click={() => scegliEtichetta(e)}>{e.plurale}</button>
+                    {/each}
+                    <button class="btn btn-sm {etichettaLibera ? 'btn-primary' : 'btn-outline-secondary'}"
+                            on:click={() => scegliEtichetta(null)}>Un'altra parola…</button>
                 </div>
-            {/if}
 
-            <div class="fw-semibold small mb-2">{etichetta.plurale}</div>
-            {#each strutture as s, i}
-                <div class="d-flex gap-2 align-items-center mb-2">
-                    <input class="form-control form-control-sm" style="width:240px"
-                           placeholder={etichetta.singolare} bind:value={s.nome} />
-                    <input class="form-control form-control-sm" style="width:200px"
-                           placeholder="Ambito (facoltativo, es. Radiologia)" bind:value={s.ambito} />
-                    <DeleteButton ondelete={() => rimuoviStruttura(i)} />
-                </div>
-            {/each}
-            <button class="btn btn-outline-primary btn-sm mt-1" on:click={aggiungiStruttura}>
-                <i class="bi bi-plus-lg me-1"></i>Aggiungi {etichetta.singolare.toLowerCase()}
-            </button>
+                {#if etichettaLibera}
+                    <div class="row g-3 align-items-end mt-1">
+                        <div class="col-auto" style="width:200px">
+                            <label class="form-label" for="etichetta-singolare">Uno solo</label>
+                            <input id="etichetta-singolare" class="form-control form-control-sm"
+                                   placeholder="es. Padiglione" bind:value={etichetta.singolare} />
+                        </div>
+                        <div class="col-auto" style="width:200px">
+                            <label class="form-label" for="etichetta-plurale">Più di uno</label>
+                            <input id="etichetta-plurale" class="form-control form-control-sm"
+                                   placeholder="es. Padiglioni" bind:value={etichetta.plurale} />
+                        </div>
+                    </div>
+                {/if}
+            </section>
+
+            <section class="guidata-sezione guidata-inserimento">
+                <h6 class="guidata-titolo">{etichetta.plurale}</h6>
+                <p class="guidata-aiuto">
+                    Il nome è quello che vedrai sul calendario dei turni. L'ambito
+                    è facoltativo e serve a distinguere due
+                    {etichetta.plurale.toLowerCase()} che si chiamano allo stesso modo.
+                </p>
+
+                <table class="table table-sm align-middle mb-2">
+                    <thead><tr>
+                        <th style="width:280px">Nome</th>
+                        <th style="width:240px">Ambito</th>
+                        <th style="width:80px">Elimina</th>
+                    </tr></thead>
+                    <tbody>
+                        {#each strutture as s, i}
+                            <tr>
+                                <td><input class="form-control form-control-sm"
+                                           aria-label="Nome {etichetta.singolare.toLowerCase()} {i + 1}"
+                                           placeholder="es. Radiologia Nord" bind:value={s.nome} /></td>
+                                <td><input class="form-control form-control-sm"
+                                           aria-label="Ambito {etichetta.singolare.toLowerCase()} {i + 1}"
+                                           placeholder="es. Radiologia" bind:value={s.ambito} /></td>
+                                <td><DeleteButton ondelete={() => rimuoviStruttura(i)} /></td>
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
+
+                <button class="btn btn-outline-primary btn-sm" on:click={aggiungiStruttura}>
+                    <i class="bi bi-plus-lg me-1"></i>Aggiungi {etichetta.singolare.toLowerCase()}
+                </button>
+            </section>
         {/if}
 
         <!-- ═══ Passo 3: i turni ═══ -->
         {#if passo === 2}
-            <p class="text-muted small">
-                Per ogni {etichetta.singolare.toLowerCase()}, i turni che si svolgono
-                e in quale fascia oraria cadono. I turni della stessa fascia finiscono
-                insieme da soli.
+            <p class="guidata-intro">
+                Per ogni {etichetta.singolare.toLowerCase()}, i turni che ci si
+                svolgono e la fascia oraria in cui cadono. Due turni sulla stessa
+                fascia si mettono insieme da soli: non devi crearci nulla attorno.
             </p>
 
             {#each struttureValide as s, i}
-                <div class="border rounded p-2 mb-3">
-                    <div class="fw-semibold mb-2">
-                        {s.nome}
-                        {#if s.ambito}<span class="text-muted small ms-1">({s.ambito})</span>{/if}
+                <section class="guidata-sezione">
+                    <div class="d-flex align-items-baseline justify-content-between mb-2">
+                        <h6 class="guidata-titolo mb-0">
+                            {s.nome}
+                            {#if s.ambito}<span class="text-muted fw-normal small ms-1">{s.ambito}</span>{/if}
+                        </h6>
+                        <span class="text-muted small">
+                            {s.turni.filter(t => t.nome.trim()).length}
+                            {s.turni.filter(t => t.nome.trim()).length === 1 ? 'turno' : 'turni'}
+                        </span>
                     </div>
 
-                    {#each s.turni as t, j}
-                        <div class="d-flex gap-2 align-items-center mb-2">
-                            <input class="form-control form-control-sm" style="width:220px"
-                                   placeholder="Nome del turno" bind:value={t.nome} />
-                            <select class="form-select form-select-sm" style="width:200px" bind:value={t.flag_id}>
-                                {#each fasceDisponibili as f}
-                                    <option value={f.id}>
-                                        {f.nome}{f.orario_inizio ? ` (${f.orario_inizio}–${f.orario_fine})` : ''}
-                                    </option>
+                    {#if s.turni.length}
+                        <table class="table table-sm align-middle mb-2">
+                            <thead><tr>
+                                <th style="width:240px">Nome</th>
+                                <th style="width:230px">Fascia oraria</th>
+                                <th style="width:120px">Duplica in…</th>
+                                <th style="width:80px">Elimina</th>
+                            </tr></thead>
+                            <tbody>
+                                {#each s.turni as t, j}
+                                    <tr>
+                                        <td>
+                                            <input class="form-control form-control-sm" aria-label="Nome turno {j + 1}"
+                                                   placeholder="es. TC mattina" bind:value={t.nome} />
+                                        </td>
+                                        <td>
+                                            <select class="form-select form-select-sm" aria-label="Fascia turno {j + 1}"
+                                                    bind:value={t.flag_id}>
+                                                {#each fasceDisponibili as f}
+                                                    <option value={f.id}>
+                                                        {f.nome}{f.orario_inizio ? ` (${f.orario_inizio}–${f.orario_fine})` : ''}
+                                                    </option>
+                                                {/each}
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group">
+                                                <button class="btn btn-outline-secondary btn-sm py-0"
+                                                        title="Stessa fascia"
+                                                        on:click={() => duplicaTurno(strutture.indexOf(s), j)}>
+                                                    <i class="bi bi-copy"></i>
+                                                </button>
+                                                <button class="btn btn-outline-secondary btn-sm py-0 dropdown-toggle dropdown-toggle-split"
+                                                        data-bs-toggle="dropdown" title="Altra fascia" aria-expanded="false">
+                                                    <span class="visually-hidden">Scegli la fascia</span>
+                                                </button>
+                                                <ul class="dropdown-menu">
+                                                    {#each fasceDisponibili as f}
+                                                        <li>
+                                                            <button class="dropdown-item small"
+                                                                    on:click={() => duplicaTurno(strutture.indexOf(s), j, f.id)}>
+                                                                {f.nome}
+                                                                {#if f.id === t.flag_id}
+                                                                    <span class="text-muted">(stessa)</span>
+                                                                {/if}
+                                                            </button>
+                                                        </li>
+                                                    {/each}
+                                                </ul>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <DeleteButton ondelete={() => rimuoviTurno(strutture.indexOf(s), j)} />
+                                        </td>
+                                    </tr>
                                 {/each}
-                            </select>
-                            <DeleteButton ondelete={() => rimuoviTurno(strutture.indexOf(s), j)} />
-                        </div>
-                    {/each}
+                            </tbody>
+                        </table>
+                    {:else}
+                        <p class="guidata-aiuto">
+                            Ancora nessun turno in {s.nome}. Aggiungi il primo: gli
+                            altri li ottieni duplicandolo, anche in un'altra fascia.
+                        </p>
+                    {/if}
 
                     <button class="btn btn-outline-primary btn-sm"
                             on:click={() => aggiungiTurno(strutture.indexOf(s))}>
                         <i class="bi bi-plus-lg me-1"></i>Aggiungi turno
                     </button>
-                </div>
+                </section>
             {/each}
 
-            <div class="border-top pt-3">
-                <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <label class="form-label mb-0 small text-muted" for="nome-struttura-turni">
-                        Nome di questa struttura turni
-                    </label>
-                    <input id="nome-struttura-turni" class="form-control form-control-sm" style="width:240px"
+            <section class="guidata-sezione guidata-inserimento">
+                <h6 class="guidata-titolo">Dai un nome a questa struttura turni</h6>
+                <p class="guidata-aiuto">
+                    È il nome con cui la sceglierai quando aprirai un calendario.
+                    Di solito basta l'anno, o il nome del servizio.
+                </p>
+                <div style="width:280px">
+                    <label class="form-label visually-hidden" for="nome-struttura-turni">Nome</label>
+                    <input id="nome-struttura-turni" class="form-control form-control-sm"
                            use:focusOnMount placeholder="es. 2026" bind:value={nomePreset} />
                 </div>
-                <div class="form-text small">
-                    {struttureValide.length}
-                    {struttureValide.length === 1
-                        ? etichetta.singolare.toLowerCase()
-                        : etichetta.plurale.toLowerCase()},
-                    {turniTotali} {turniTotali === 1 ? 'turno' : 'turni'} in tutto.
-                </div>
-            </div>
+            </section>
         {/if}
     </div>
 
-    <div class="card-footer d-flex justify-content-between">
+    <div class="card-footer d-flex justify-content-between align-items-center">
         <button class="btn btn-outline-secondary btn-sm" disabled={passo === 0}
                 on:click={() => { errore = ''; passo -= 1; }}>
             <i class="bi bi-arrow-left me-1"></i>Indietro
         </button>
 
-        {#if passo < PASSI.length - 1}
+        <span class="text-muted small">
+            {struttureValide.length}
+            {struttureValide.length === 1
+                ? etichetta.singolare.toLowerCase()
+                : etichetta.plurale.toLowerCase()}
+            · {turniTotali} {turniTotali === 1 ? 'turno' : 'turni'}
+        </span>
+
+        {#if passo < passi.length - 1}
             <button class="btn btn-primary btn-sm" disabled={!puoAvanzare}
                     on:click={() => { errore = ''; passo += 1; }}>
                 Avanti<i class="bi bi-arrow-right ms-1"></i>
             </button>
         {:else}
             <button class="btn btn-success btn-sm" disabled={!puoAvanzare || salvataggio} on:click={completa}>
-                <i class="bi bi-check-lg me-1"></i>{salvataggio ? 'Creazione…' : 'Crea la struttura turni'}
+                {salvataggio ? 'Creazione…' : 'Crea la struttura turni'}
             </button>
         {/if}
     </div>
 </div>
+
+<style>
+    .guidata {
+        max-width: 1040px;
+    }
+
+    /* ── I passi ─────────────────────────────────────────────────────── */
+    .guidata-passi {
+        border-bottom: 1px solid var(--bs-border-color);
+        background: var(--bs-tertiary-bg);
+    }
+    .guidata-passo + .guidata-passo {
+        border-left: 1px solid var(--bs-border-color);
+    }
+    .guidata-numero {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.6rem;
+        height: 1.6rem;
+        border-radius: 50%;
+        font-size: .8rem;
+        font-weight: 600;
+        border: 1px solid var(--bs-border-color);
+        color: var(--bs-secondary-color);
+        background: var(--bs-body-bg);
+    }
+    .guidata-passo.corrente {
+        background: var(--bs-body-bg);
+        font-weight: 600;
+    }
+    .guidata-passo.corrente .guidata-numero {
+        background: var(--bs-primary);
+        border-color: var(--bs-primary);
+        color: #fff;
+    }
+    .guidata-passo.fatto .guidata-numero {
+        background: var(--bs-success);
+        border-color: var(--bs-success);
+        color: #fff;
+    }
+    .guidata-passo.futuro {
+        color: var(--bs-secondary-color);
+    }
+
+    /* ── Riquadri ────────────────────────────────────────────────────── */
+    .guidata-intro {
+        font-size: .9rem;
+        color: var(--bs-secondary-color);
+        max-width: 62ch;
+    }
+    .guidata-sezione {
+        border: 1px solid var(--bs-border-color);
+        border-radius: .5rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    /* Dove si inserisce qualcosa di nuovo, invece che modificare l'esistente. */
+    .guidata-sezione.guidata-inserimento {
+        background: var(--bs-tertiary-bg);
+    }
+    .guidata-titolo {
+        font-size: .8rem;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: var(--bs-secondary-color);
+        margin-bottom: .5rem;
+    }
+    .guidata-aiuto {
+        font-size: .8rem;
+        color: var(--bs-secondary-color);
+        margin-bottom: .75rem;
+    }
+    .guidata-sezione :global(.form-label) {
+        font-size: .78rem;
+        font-weight: 600;
+        color: var(--bs-secondary-color);
+        margin-bottom: .2rem;
+    }
+    .guidata-sezione :global(.table > thead th) {
+        font-size: .75rem;
+        text-transform: uppercase;
+        letter-spacing: .03em;
+        font-weight: 600;
+        color: var(--bs-secondary-color);
+        border-bottom-width: 1px;
+    }
+    /* Il campo attivo si vede da lontano: e' la domanda "dove scrivo?". */
+    .guidata-sezione :global(.form-control:focus),
+    .guidata-sezione :global(.form-select:focus) {
+        border-color: var(--bs-primary);
+        box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .2);
+    }
+</style>

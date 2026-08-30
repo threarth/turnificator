@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { costruisciStruttura, gruppiDellaStruttura, toSigla }
+import { costruisciStruttura, gruppiDellaStruttura, nomeDuplicato, toSigla }
     from '../src/lib/admin/struttura.js';
 
 // Fasce di riferimento, negli stessi orari del seed.
@@ -142,3 +142,49 @@ test('un turno nuovo nasce automatico, feriale e visibile', () => {
     assert.equal(turno.is_hidden, 0);
     assert.deepEqual(turno.tipi_qualitativi, []);
 });
+
+
+// ---------------------------------------------------------------------------
+// Nome proposto per la copia di un turno
+// ---------------------------------------------------------------------------
+
+test('duplicando nella stessa fascia il numero finale avanza', () => {
+    assert.equal(nomeDuplicato('DEA1', 'mattina', 'mattina'), 'DEA2');
+    assert.equal(nomeDuplicato('DEA 9', 'mattina', 'mattina'), 'DEA 10');
+});
+
+
+test('gli zeri iniziali del numero si conservano', () => {
+    assert.equal(nomeDuplicato('T01', 'mattina', 'mattina'), 'T02');
+    assert.equal(nomeDuplicato('T09', 'mattina', 'mattina'), 'T10');
+});
+
+
+test('senza numero finale la copia prende il 2', () => {
+    assert.equal(nomeDuplicato('Guardia', 'notte', 'notte'), 'Guardia 2');
+});
+
+
+test('cambiando fascia il nome segue la fascia nuova', () => {
+    assert.equal(nomeDuplicato('TC mattina', 'mattina', 'pomeriggio'), 'TC pomeriggio');
+});
+
+
+test("la maiuscola iniziale della fascia nominata viene rispettata", () => {
+    assert.equal(nomeDuplicato('TC Mattina', 'mattina', 'pomeriggio'), 'TC Pomeriggio');
+});
+
+
+test('cambiando fascia il nome che non la cita resta intatto', () => {
+    // La sigla porta in coda quella della fascia: i due turni si distinguono
+    // gia' da sola, non serve numerarli.
+    assert.equal(nomeDuplicato('Guardia', 'mattina', 'notte'), 'Guardia');
+    assert.equal(nomeDuplicato('Guardia1', 'mattina', 'notte'), 'Guardia1');
+});
+
+
+test('il nome vuoto o assente non manda in errore la duplicazione', () => {
+    assert.equal(nomeDuplicato('', 'mattina', 'mattina'), ' 2');
+    assert.equal(nomeDuplicato(null, 'mattina', 'pomeriggio'), '');
+});
+

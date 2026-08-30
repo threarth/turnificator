@@ -22,6 +22,10 @@ const TURNO_DEFAULT = {
 
 const LUNGHEZZA_MAX_SIGLA = 8;
 
+// Suffisso dato alla copia di un turno il cui nome non finisce con un numero
+// e non nomina la sua fascia: "Guardia" diventa "Guardia 2".
+const SUFFISSO_COPIA = ' 2';
+
 /**
  * Ricava una sigla leggibile da un nome libero.
  *
@@ -101,3 +105,62 @@ export function costruisciStruttura(strutture, fasce, nuovoId) {
             gruppi: gruppiDellaStruttura(s, fasce, nuovoId),
         }));
 }
+
+
+/**
+ * Propone il nome per la copia di un turno.
+ *
+ * La copia in un'altra fascia e' gia' un turno diverso — la sigla porta in
+ * coda quella della fascia, quindi TC_MATTINA e TC_POMERIGGIO si distinguono
+ * da soli — e il nome resta com'e'. Fa eccezione il nome che cita la fascia
+ * di partenza: "TC mattina" duplicato nel pomeriggio diventa "TC pomeriggio".
+ *
+ * Nella stessa fascia invece i due turni si somiglierebbero in tutto, quindi
+ * il nome va distinto: "DEA1" diventa "DEA2", "Guardia" diventa "Guardia 2".
+ *
+ * @param {string} nome — nome del turno originale.
+ * @param {string} fasciaOrigine — nome della fascia di partenza.
+ * @param {string} fasciaDestinazione — nome della fascia della copia.
+ * @returns {string} nome proposto, comunque modificabile dall'utente.
+ */
+export function nomeDuplicato(nome, fasciaOrigine = '', fasciaDestinazione = '') {
+    const originale = (nome ?? '').trim();
+
+    if (fasciaDestinazione && fasciaDestinazione !== fasciaOrigine) {
+        return sostituisciNomeFascia(originale, fasciaOrigine, fasciaDestinazione) ?? originale;
+    }
+
+    const numeroFinale = originale.match(/^(.*?)(\d+)$/);
+    if (numeroFinale) {
+        const [, radice, cifre] = numeroFinale;
+        const successivo = String(Number(cifre) + 1);
+        // Conserva gli zeri iniziali: "T01" continua con "T02".
+        return radice + successivo.padStart(cifre.length, '0');
+    }
+
+    return originale + SUFFISSO_COPIA;
+}
+
+/**
+ * Sostituisce nel nome il riferimento a una fascia con quello di un'altra.
+ *
+ * Rispetta l'iniziale maiuscola di quello che trova, cosi' "TC Mattina"
+ * diventa "TC Pomeriggio" e "tc mattina" diventa "tc pomeriggio".
+ *
+ * @returns {string|null} il nome nuovo, o null se la fascia non e' nominata.
+ */
+function sostituisciNomeFascia(nome, fasciaOrigine, fasciaDestinazione) {
+    if (!fasciaOrigine) return null;
+
+    const posizione = nome.toLowerCase().indexOf(fasciaOrigine.toLowerCase());
+    if (posizione < 0) return null;
+
+    const trovato = nome.slice(posizione, posizione + fasciaOrigine.length);
+    const iniziale = trovato[0];
+    const sostituto = iniziale === iniziale.toUpperCase() && iniziale !== iniziale.toLowerCase()
+        ? fasciaDestinazione[0].toUpperCase() + fasciaDestinazione.slice(1)
+        : fasciaDestinazione;
+
+    return nome.slice(0, posizione) + sostituto + nome.slice(posizione + fasciaOrigine.length);
+}
+
