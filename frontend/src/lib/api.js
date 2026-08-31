@@ -154,6 +154,12 @@ export const adminApi = {
   setDeadline:   (id, dati)    => api.put(`/api/admin/calendari/${id}/deadline`, dati),
 
   getConfig:  ()       => api.get('/api/admin/config'),
+
+  // Configurazioni salvate: l'intera impostazione del tenant sotto un nome
+  getConfigurazioni:   ()     => api.get('/api/admin/configurazioni'),
+  salvaConfigurazione: (dati) => api.post('/api/admin/configurazioni', dati),
+  attivaConfigurazione: (id)  => api.put(`/api/admin/configurazioni/${id}/attiva`, {}),
+  delConfigurazione:   (id)   => api.delete(`/api/admin/configurazioni/${id}`),
   setConfig:  (dati)   => api.put('/api/admin/config', dati),
 
   // Vincoli solver

@@ -126,3 +126,45 @@ def test_attivare_una_configurazione_inesistente_e_un_errore(tenant):
 
     with pytest.raises(ConfigurazioneNonValida):
         attiva_configurazione(tenant, 9999)
+
+
+# ---------------------------------------------------------------------------
+# Le route
+# ---------------------------------------------------------------------------
+
+def test_il_giro_completo_dalle_api(client, admin_token, auth):
+    """Salva, elenca, attiva: il percorso che fara' il selettore globale."""
+    rv = client.post('/api/admin/configurazioni', json={'nome': 'estate'},
+                     headers=auth(admin_token))
+    assert rv.status_code == 201, rv.get_json()
+    cid = rv.get_json()['id']
+
+    rv = client.get('/api/admin/configurazioni', headers=auth(admin_token))
+    assert rv.status_code == 200
+    assert [c['nome'] for c in rv.get_json()['configurazioni']] == ['estate']
+
+    rv = client.put(f'/api/admin/configurazioni/{cid}/attiva', headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+    assert rv.get_json()['scritte']['flag_turno'] > 0
+
+    rv = client.get('/api/admin/configurazioni', headers=auth(admin_token))
+    assert rv.get_json()['configurazioni'][0]['is_attiva'] == 1
+
+
+def test_la_configurazione_attiva_non_si_elimina(client, admin_token, auth):
+    """Cancellarla lascerebbe il tenant senza il riferimento di cio' che usa."""
+    rv = client.post('/api/admin/configurazioni', json={'nome': 'in_uso'},
+                     headers=auth(admin_token))
+    cid = rv.get_json()['id']
+    client.put(f'/api/admin/configurazioni/{cid}/attiva', headers=auth(admin_token))
+
+    rv = client.delete(f'/api/admin/configurazioni/{cid}', headers=auth(admin_token))
+    assert rv.status_code == 409
+    assert 'non si elimina' in rv.get_json()['errore']
+
+
+def test_una_configurazione_senza_nome_e_rifiutata(client, admin_token, auth):
+    """Il nome e' l'unico modo per ritrovarla."""
+    rv = client.post('/api/admin/configurazioni', json={'nome': '   '},
+                     headers=auth(admin_token))
+    assert rv.status_code == 400
