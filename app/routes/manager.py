@@ -211,7 +211,7 @@ def struttura_calendario(cal_id):
                gruppo_id AS g_id, gruppo_sigla AS g_sigla, gruppo_nome AS g_nome,
                gruppo_ordine AS g_ordine, style AS g_style, turno_style,
                sg_id, sg_sigla, sg_nome, sg_ordine, sg_style,
-               flag_nome, flag_id,
+               flag_nome, flag_id, tipi_qualitativi,
                peso_turno, ore_turno, ore_primo_giorno, ore_ultimo_giorno,
                apri_festivi, apri_superfestivi, aperture_straordinarie,
                is_disabled, is_hidden
@@ -249,6 +249,8 @@ def struttura_calendario(cal_id):
             'style': json.loads(row.get('turno_style', '{}')),
             'flag_nome': row.get('flag_nome'),
             'flag_id': row.get('flag_id'),
+            # Le tipologie del turno servono ai conteggi del context menu.
+            'tipi_qualitativi': json.loads(row.get('tipi_qualitativi') or '[]'),
             'peso_turno': row.get('peso_turno', 1),
             'ore_turno': row.get('ore_turno'),
             'ore_primo_giorno': row.get('ore_primo_giorno'),

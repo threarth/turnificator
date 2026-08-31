@@ -150,7 +150,10 @@
   let msgConfig = '';
   let conteggiConfig = [];
   let showAddConteggio = false;
-  let nuovoConteggio = { id: '', label: '', flag_nome: '', giorno_settimana: null, negato: false, attivo: true };
+  // Un conteggio guarda una fascia oraria (per nome, con discendenza)
+  // oppure una tipologia turno (per id). Quelli salvati prima non hanno
+  // il campo `tipo` e si leggono come fascia.
+  let nuovoConteggio = conteggioVuoto();
   // ── Vincoli Solver (stato gestito da VincoliSolver.svelte) ──
   let vincoliGlobali = [];
   let vincoliSolver = [];
@@ -1349,10 +1352,22 @@
     if (r.ok) setMsg('cfg', 'Conteggi salvati.');
     else setMsg('cfg', r.errore, false);
   }
+  // Stato iniziale del form conteggio: una sola definizione.
+  function conteggioVuoto() {
+    return { id: '', label: '', tipo: 'fascia', flag_nome: '', ref_id: null,
+             giorno_settimana: null, negato: false, attivo: true };
+  }
+
   function addConteggio() {
     if (!nuovoConteggio.id.trim() || !nuovoConteggio.label.trim()) return;
+    // Senza un riferimento il conteggio non conterebbe nulla.
+    const haRiferimento = nuovoConteggio.tipo === 'tipologia'
+      ? nuovoConteggio.ref_id != null
+      : !!nuovoConteggio.flag_nome;
+    if (!haRiferimento) { setMsg('cfg', 'Scegli cosa deve contare.', false); return; }
+
     conteggiConfig = [...conteggiConfig, { ...nuovoConteggio }];
-    nuovoConteggio = { id: '', label: '', flag_nome: '', giorno_settimana: null, negato: false, attivo: true };
+    nuovoConteggio = conteggioVuoto();
     salvaConteggi();
   }
   function removeConteggio(idx) {
@@ -2552,9 +2567,28 @@
             <input class="form-control form-control-sm" style="width:100px" placeholder="Etichetta"
                    bind:value={nuovoConteggio.label}
                    on:keydown={e => e.key === 'Enter' && addConteggio()} />
-            <input class="form-control form-control-sm" style="width:90px" placeholder="flag"
-                   bind:value={nuovoConteggio.flag_nome}
-                   on:keydown={e => e.key === 'Enter' && addConteggio()} />
+            <select class="form-select form-select-sm" style="width:110px"
+                    bind:value={nuovoConteggio.tipo}>
+              <option value="fascia">fascia oraria</option>
+              <option value="tipologia">tipologia</option>
+            </select>
+            {#if nuovoConteggio.tipo === 'tipologia'}
+              <select class="form-select form-select-sm" style="width:140px"
+                      bind:value={nuovoConteggio.ref_id}>
+                <option value={null}>— scegli —</option>
+                {#each tipiQualitativo as tq}
+                  <option value={tq.id}>{tq.nome}</option>
+                {/each}
+              </select>
+            {:else}
+              <select class="form-select form-select-sm" style="width:140px"
+                      bind:value={nuovoConteggio.flag_nome}>
+                <option value="">— scegli —</option>
+                {#each fasceRegolaConflitto as f}
+                  <option value={f.nome}>{f.parent_nome ? f.parent_nome + '→' : ''}{f.nome}</option>
+                {/each}
+              </select>
+            {/if}
             <select class="form-select form-select-sm" style="width:80px"
                     bind:value={nuovoConteggio.giorno_settimana}>
               <option value={null}>Tutti</option>
@@ -2576,7 +2610,13 @@
           columns={[
             { key: 'id', label: 'ID', width: '70px' },
             { key: 'label', label: 'Etichetta', width: '90px' },
-            { key: 'flag_nome', label: 'Flag', width: '80px', formatHtml: (v) => flagLabel(v, flagTurno) },
+            { key: 'tipo', label: 'Guarda', type: 'select', width: '95px',
+              options: [{value:'fascia',label:'fascia oraria'},{value:'tipologia',label:'tipologia'}],
+              format: (v) => v === 'tipologia' ? 'tipologia' : 'fascia oraria' },
+            { key: 'flag_nome', label: 'Quale', width: '120px',
+              formatHtml: (v, item) => item.tipo === 'tipologia'
+                ? (tipiQualitativo.find(t => t.id === item.ref_id)?.nome ?? '—')
+                : flagLabel(v, flagTurno) },
             { key: 'giorno_settimana', label: 'Giorno', type: 'select', width: '75px',
               options: [{value:null,label:'Tutti'},{value:1,label:'Lun'},{value:2,label:'Mar'},{value:3,label:'Mer'},{value:4,label:'Gio'},{value:5,label:'Ven'},{value:6,label:'Sab'},{value:0,label:'Dom'}],
               format: (v) => v != null ? ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'][v] : 'tutti' },

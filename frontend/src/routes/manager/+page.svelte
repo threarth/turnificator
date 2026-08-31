@@ -1163,6 +1163,7 @@
           const orePrimo = t.ore_primo_giorno;
           const oreUltimo = t.ore_ultimo_giorno;
           const fasciaTurno = t.flag_nome;
+          const tipologieTurno = t.tipi_qualitativi ?? [];
           for (let g = 1; g <= numGiorni; g++) {
             const uid = localAss[`${t.id}-${g}`]?.user_id;
             if (uid == null) continue;
@@ -1178,9 +1179,12 @@
             // Conteggi configurabili
             const dow = gs[g]; // 0=Dom, 6=Sab
             for (const c of conteggi) {
-              // Un conteggio configurato sul concetto (es. 'notturno') deve
-              // contare tutte le sue fasce, comunque siano state rinominate.
-              const matchTipo = discendeDaNome(fasciaTurno, c.flag_nome, mappaFlag);
+              // Un conteggio guarda una fascia oraria oppure una tipologia.
+              // Sulla fascia vale la discendenza: un conteggio sul concetto
+              // 'notturno' prende ogni sua fascia, comunque rinominata.
+              const matchTipo = c.tipo === 'tipologia'
+                ? tipologieTurno.includes(c.ref_id)
+                : discendeDaNome(fasciaTurno, c.flag_nome, mappaFlag);
               const matchGiorno = c.giorno_settimana == null || dow === c.giorno_settimana;
               const match = c.negato ? (!matchTipo && matchGiorno) : (matchTipo && matchGiorno);
               if (match) {
