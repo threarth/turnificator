@@ -42,7 +42,7 @@ from app.services.fasce_orarie import (
 )
 from app.services.config_snapshot import (
     carica_config_snapshot,
-    snap_manager_puo_turno, snap_manager_puo_utente,
+    snap_manager_puo_turno, snap_manager_puo_utente, snap_tipi_richiesta,
 )
 from app.services.websocket import (
     broadcast_assegnazione, broadcast_svuota,
@@ -116,6 +116,35 @@ def get_effettivo(cal_id):
 # =============================================================================
 # STRUTTURA COMPLETA CALENDARIO
 # =============================================================================
+
+def _arricchisci_con_tipo_richiesta(righe, cal_id):
+    """
+    Aggiunge sigla e tipo della richiesta, come erano quando il calendario
+    e' stato creato.
+
+    Rinominare o riclassificare un tipo richiesta non deve cambiare il
+    significato di un desiderata gia' espresso: 'assenza' o 'lavorativo'
+    decide anche il colore della cella.
+
+    Args:
+        righe (list): righe con `tipo_richiesta_id`.
+        cal_id (int): calendario da cui prendere lo snapshot.
+
+    Returns:
+        list: le stesse righe, con `req_sigla` e `req_tipo` valorizzati.
+    """
+    tipi = snap_tipi_richiesta(carica_config_snapshot(cal_id))
+    if not tipi:
+        return righe
+
+    for r in righe:
+        tipo = tipi.get(r.get('tipo_richiesta_id'))
+        if tipo:
+            r['req_sigla'] = tipo.get('sigla')
+            r['req_tipo'] = tipo.get('tipo')
+
+    return righe
+
 
 def _etichetta_struttura():
     """
@@ -1160,7 +1189,10 @@ def lista_desiderata(cal_id):
         """,
         (cal_id,)
     )
-    return jsonify({'ok': True, 'desiderata': des}), 200
+    return jsonify({
+        'ok': True,
+        'desiderata': _arricchisci_con_tipo_richiesta(des, cal_id),
+    }), 200
 
 
 # =============================================================================
@@ -1189,7 +1221,10 @@ def lista_working_desiderata(cal_id):
         """,
         (cal_id,)
     )
-    return jsonify({'ok': True, 'working_desiderata': wd}), 200
+    return jsonify({
+        'ok': True,
+        'working_desiderata': _arricchisci_con_tipo_richiesta(wd, cal_id),
+    }), 200
 
 
 @bp.route('/calendari/<int:cal_id>/working-desiderata', methods=['PUT'])

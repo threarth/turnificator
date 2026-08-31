@@ -156,3 +156,37 @@ def test_le_ore_non_cambiano_se_cambia_il_tipo_richiesta(
     assert rv.status_code == 200, rv.get_json()
 
     assert _ore_giustificate(client, admin_token, auth, cal_id) == ore_prima
+
+
+def test_il_desiderata_conserva_il_tipo_con_cui_fu_espresso(
+        client, admin_token, auth, _test_env):
+    """
+    Riclassificare un tipo richiesta non deve cambiare il significato di un
+    desiderata gia' espresso: da 'assenza' dipende anche il colore della cella.
+    """
+    from tests.conftest import _open_sqlcipher
+
+    cal_id = _crea_calendario(client, admin_token, auth, mese=11)
+    tipo = _tipo_richiesta_assenza_contabile(client, admin_token, auth)
+
+    db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
+    uid = db.execute("SELECT id FROM users WHERE username='basic_t'").fetchone()['id']
+    db.execute(
+        "INSERT INTO working_desiderata (calendario_id, user_id, giorno, tipo_richiesta_id) "
+        "VALUES (?,?,?,?)",
+        (cal_id, uid, 7, tipo['id'])
+    )
+    db.commit()
+
+    rv = client.put(f"/api/admin/tipi-richiesta/{tipo['id']}",
+                    json={**tipo, 'sigla': 'ZZ', 'tipo': 'lavorativo'},
+                    headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    rv = client.get(f'/api/manager/calendari/{cal_id}/working-desiderata',
+                    headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    riga = next(w for w in rv.get_json()['working_desiderata'] if w['giorno'] == 7)
+    assert riga['req_sigla'] == tipo['sigla']
+    assert riga['req_tipo'] == 'assenza'
