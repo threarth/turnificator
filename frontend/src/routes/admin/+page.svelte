@@ -11,7 +11,7 @@
   import DeleteButton from '$lib/admin/DeleteButton.svelte';
   import FlagRow from '$lib/admin/FlagRow.svelte';
   import FlagForm from '$lib/admin/FlagForm.svelte';
-  import ProceduraGuidata from '$lib/admin/ProceduraGuidata.svelte';
+  import ConfigurazioneGuidata from '$lib/admin/guidata/ConfigurazioneGuidata.svelte';
   import { etichettaStruttura, leggiEtichettaDaConfig } from '$lib/etichette.js';
   import { decToHm, hmToDec, hmToMin, minToHm } from '$lib/admin/durate.js';
   import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
@@ -85,8 +85,11 @@
   let activeAddTurno  = null;          // 'sgId:gId' stringa
   let nuovoSg     = { nome: '', sigla: '', ambito: '' };
 
-  // Procedura guidata: crea sempre un preset nuovo, non tocca gli altri.
+  // Configurazione guidata. `configurazioneAperta` e' quella che si sta
+  // aggiornando: se e' null la guidata ne crea una nuova.
   let wizardAttivo = false;
+  let configurazioni = [];
+  let configurazioneAperta = null;
 
   let nuovoGruppo = { nome: '', sigla: '', flag_id: null };
   let nuovoTurno  = { nome: '', tipiQualitativoIds: [] };
@@ -944,6 +947,8 @@
   async function wizardCompletato(presetId, etichetta) {
     etichettaStruttura.set(etichetta);
     wizardAttivo = false;
+    configurazioneAperta = null;
+    configurazioni = (await adminApi.getConfigurazioni()).configurazioni ?? [];
     presets = (await adminApi.getPresets()).presets ?? [];
     const creato = presets.find(p => p.id === presetId);
     if (creato) await apriPreset(creato);
@@ -2798,12 +2803,23 @@
 
     {#if wizardAttivo}
 
-      <ProceduraGuidata fasce={flagTurno} etichetta={$etichettaStruttura}
-                        oncompletata={wizardCompletato}
-                        onannulla={() => wizardAttivo = false}
-                        onfasceaggiornate={async () => {
-                          flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
-                        }} />
+      <ConfigurazioneGuidata fasce={flagTurno} tipologie={tipiQualitativo}
+                             conteggi={conteggiConfig}
+                             etichetta={$etichettaStruttura}
+                             configurazione={configurazioneAperta}
+                             {vincoliGlobali} {vincoliSolver}
+                             oncompletata={wizardCompletato}
+                             onannulla={() => wizardAttivo = false}
+                             onfasceaggiornate={async () => {
+                               flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
+                             }}
+                             ontipologieaggiornate={async () => {
+                               tipiQualitativo = (await adminApi.getTipiQualitativo()).tipi ?? [];
+                             }}
+                             onconteggiaggiornati={async (nuovi) => {
+                               conteggiConfig = nuovi;
+                               await salvaConteggi();
+                             }} />
 
     {:else if !editPreset}
 

@@ -1,35 +1,55 @@
 <!--
-  ProceduraGuidata — accompagna alla creazione della struttura turni chi non
-  conosce il sistema.
+  ConfigurazioneGuidata — l'intera configurazione del tenant, accompagnata.
 
-  Nuova feature. I tre livelli interni — sovragruppo, gruppo, turno — qui non
-  si vedono: l'utente definisce le fasce orarie, poi le sue strutture (che
-  chiama come vuole: reparto, ambulatorio, presidio), poi i turni di ciascuna.
-  Il gruppo, che e' l'insieme dei turni di una fascia dentro una struttura,
-  nasce da solo: due turni sulla stessa fascia finiscono nello stesso gruppo.
+  Nuova feature. Sei sezioni indipendenti con una roadmap in cima: si
+  percorrono in ordine la prima volta, ma poi si salta direttamente a quella
+  che serve. Riaprirla e' il caso normale, non l'eccezione.
 
-  Non tocca le strutture esistenti: crea sempre un preset nuovo, e alla fine
-  lo consegna all'editor normale.
+  Cinque sezioni su sei lavorano sui dati veri e salvano subito: fasce,
+  tipologie, conteggi e vincoli sono impostazioni globali e non hanno niente
+  da confermare alla fine. Fanno eccezione strutture e turni, che accumulano
+  in memoria e producono la struttura turni alla conferma.
+
+  I tre livelli interni — sovragruppo, gruppo, turno — non si vedono mai: il
+  gruppo, che e' l'insieme dei turni di una fascia dentro una struttura, nasce
+  da solo quando due turni cadono nella stessa fascia.
 
   Props:
     - fasce           : Array — flag_turno, come li carica la pagina admin
+    - tipologie       : Array — tipi qualitativo
+    - conteggi        : Array — conteggi del context menu
     - etichetta       : {singolare, plurale} — come l'utente chiama le strutture
-    - oncompletata    : (presetId, etichetta) => void — preset creato
-    - onannulla       : () => void — uscita senza creare nulla
+    - configurazione  : {nome, preset_id}|null — quella da aggiornare, se si rientra
+    - adminApi        : il client API, per le sezioni che lo usano
+    - tipiQualitativo, vincoliGlobali, vincoliSolver — passati a VincoliSolver
+    - oncompletata    : (presetId, etichetta) => void — configurazione salvata
+    - onannulla       : () => void — uscita
     - onfasceaggiornate : () => Promise — ricarica i flag nel chiamante
+    - ontipologieaggiornate : () => Promise — ricarica le tipologie
+    - onconteggiaggiornati  : (conteggi) => Promise — salva e ricarica i conteggi
 -->
 <script>
     import { adminApi } from '$lib/api.js';
-    import { focusOnMount } from './actions.js';
-    import DeleteButton from './DeleteButton.svelte';
-    import { minToHm } from './durate.js';
-    import { costruisciStruttura, nomeDuplicato } from './struttura.js';
+    import { focusOnMount } from '../actions.js';
+    import DeleteButton from '../DeleteButton.svelte';
+    import VincoliSolver from '../VincoliSolver.svelte';
+    import { minToHm } from '../durate.js';
+    import { costruisciStruttura, nomeDuplicato } from '../struttura.js';
+    import SezioneTipologie from './SezioneTipologie.svelte';
+    import SezioneConteggi from './SezioneConteggi.svelte';
 
     export let fasce = [];
+    export let tipologie = [];
+    export let conteggi = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
+    export let configurazione = null;
+    export let vincoliGlobali = [];
+    export let vincoliSolver = [];
     export let oncompletata;
     export let onannulla;
     export let onfasceaggiornate;
+    export let ontipologieaggiornate;
+    export let onconteggiaggiornati;
 
     // Il turno tipo e' l'unita' di misura del peso, non classifica turni:
     // non va offerto come categoria di una fascia.
@@ -49,9 +69,19 @@
         { singolare: 'Struttura',   plurale: 'Strutture' },
     ];
 
-    // Il secondo passo prende il nome dalla parola scelta dall'utente: cosi'
-    // la scelta si vede confermata subito nell'intestazione.
-    $: passi = ['Fasce orarie', etichetta.plurale, 'I turni'];
+    // Le sezioni, nell'ordine in cui conviene percorrerle la prima volta.
+    // `chiusa` distingue quelle che salvano subito da strutture e turni, che
+    // producono qualcosa solo alla conferma finale.
+    $: sezioni = [
+        { id: 'fasce',      nome: 'Fasce orarie',      chiusa: true },
+        { id: 'tipologie',  nome: 'Tipologie turno',   chiusa: true },
+        { id: 'strutture',  nome: etichetta.plurale,   chiusa: false },
+        { id: 'turni',      nome: 'I turni',           chiusa: false },
+        { id: 'conteggi',   nome: 'Conteggi',          chiusa: true },
+        { id: 'vincoli',    nome: 'Vincoli',           chiusa: true },
+    ];
+
+    $: sezioneCorrente = sezioni[passo]?.id;
 
     let passo = 0;
     let errore = '';
@@ -225,26 +255,53 @@
     $: turniTotali = struttureValide
         .reduce((somma, s) => somma + s.turni.filter(t => t.nome.trim()).length, 0);
 
-    $: puoAvanzare = [
-        fasceDisponibili.length > 0,
-        struttureValide.length > 0 && etichetta.singolare.trim(),
-        turniTotali > 0 && nomePreset.trim(),
-    ][passo];
+    // Le sezioni si attraversano liberamente: il requisito riguarda solo il
+    // salvataggio finale, che senza turni e senza nome non ha cosa produrre.
+    $: puoSalvare = turniTotali > 0
+        && nomePreset.trim()
+        && etichetta.singolare.trim();
+
+    // Cosa manca perche' la configurazione sia salvabile, detto all'utente.
+    $: cosaManca = !turniTotali ? 'Aggiungi almeno un turno.'
+        : !nomePreset.trim() ? 'Dai un nome a questa configurazione.'
+        : '';
+
+    function vaiA(indice) {
+        errore = '';
+        passo = indice;
+    }
+
+    /**
+     * Trova la struttura turni su cui scrivere.
+     *
+     * Rientrando in una configurazione gia' salvata si aggiorna la sua,
+     * invece di lasciarne dietro una copia a ogni giro. Le strutture create a
+     * mano vivono in altri preset e non vengono toccate.
+     *
+     * @returns {Promise<number|null>} id del preset, null se la creazione fallisce
+     */
+    async function presetDaAggiornare() {
+        if (configurazione?.preset_id) return configurazione.preset_id;
+
+        const creato = await adminApi.creaPreset({ nome: nomeCompletoPreset(nomePreset) });
+        if (!creato.ok) {
+            errore = creato.errore || 'Creazione della struttura turni non riuscita.';
+            return null;
+        }
+
+        return creato.id;
+    }
 
     async function completa() {
-        if (!puoAvanzare || salvataggio) return;
+        if (!puoSalvare || salvataggio) return;
 
         salvataggio = true;
         errore = '';
 
-        const creato = await adminApi.creaPreset({ nome: nomeCompletoPreset(nomePreset) });
-        if (!creato.ok) {
-            errore = creato.errore || 'Creazione del preset non riuscita.';
-            salvataggio = false;
-            return;
-        }
+        const presetId = await presetDaAggiornare();
+        if (presetId === null) { salvataggio = false; return; }
 
-        const salvato = await adminApi.salvaStrutturaPreset(creato.id, {
+        const salvato = await adminApi.salvaStrutturaPreset(presetId, {
             struttura: costruisciStruttura(strutture, fasce, idTemporaneo),
         });
         if (!salvato.ok) {
@@ -258,8 +315,20 @@
             etichetta_strutture: etichetta.plurale.trim(),
         });
 
+        // La configurazione congela tutto sotto il nome scelto: rientrando,
+        // lo stesso nome la aggiorna invece di aggiungerne una.
+        const conf = await adminApi.salvaConfigurazione({
+            nome: nomePreset.trim(),
+            preset_id: presetId,
+        });
+        if (!conf.ok) {
+            errore = conf.errore || 'Salvataggio della configurazione non riuscito.';
+            salvataggio = false;
+            return;
+        }
+
         salvataggio = false;
-        oncompletata(creato.id, { ...etichetta });
+        oncompletata(presetId, { ...etichetta });
     }
 
     // I preset di struttura portano tutti lo stesso prefisso.
@@ -272,23 +341,37 @@
 <div class="guidata card">
     <div class="card-header d-flex align-items-center justify-content-between py-3">
         <div>
-            <div class="fw-semibold"><i class="bi bi-compass me-2"></i>Procedura guidata</div>
-            <div class="text-muted small">Tre passi per costruire una struttura turni da zero. Quelle che hai già restano come sono.</div>
+            <div class="fw-semibold">
+                <i class="bi bi-compass me-2"></i>Configurazione guidata
+                {#if configurazione}
+                    <span class="text-muted fw-normal small ms-1">— {configurazione.nome}</span>
+                {/if}
+            </div>
+            <div class="text-muted small">
+                {#if configurazione}
+                    Aggiorna quello che serve: puoi andare direttamente alla sezione che ti interessa.
+                {:else}
+                    Sei sezioni, percorribili in ordine o saltando a quella che serve.
+                {/if}
+            </div>
         </div>
         <button class="btn btn-sm btn-outline-secondary" on:click={onannulla}>Esci</button>
     </div>
 
-    <!-- I passi sono numerati perche' sono davvero in sequenza: non si
-         collocano i turni prima di avere le fasce e le strutture. -->
-    <nav class="guidata-passi d-flex" aria-label="Avanzamento">
-        {#each passi as nome, i}
-            <div class="guidata-passo flex-fill d-flex align-items-center gap-2 px-3 py-2
-                        {i === passo ? 'corrente' : i < passo ? 'fatto' : 'futuro'}">
+    <!-- La roadmap: numerata perche' l'ordine e' quello sensato la prima
+         volta, ma ogni tappa e' raggiungibile direttamente. -->
+    <nav class="guidata-passi d-flex" aria-label="Sezioni della configurazione">
+        {#each sezioni as sezione, i}
+            <button type="button"
+                    class="guidata-passo flex-fill d-flex align-items-center gap-2 px-3 py-2
+                           {i === passo ? 'corrente' : i < passo ? 'fatto' : 'futuro'}"
+                    title="Vai a {sezione.nome}"
+                    on:click={() => vaiA(i)}>
                 <span class="guidata-numero">
                     {#if i < passo}<i class="bi bi-check-lg"></i>{:else}{i + 1}{/if}
                 </span>
-                <span class="small">{nome}</span>
-            </div>
+                <span class="small">{sezione.nome}</span>
+            </button>
         {/each}
     </nav>
 
@@ -297,8 +380,8 @@
             <div class="alert alert-danger py-2 small">{errore}</div>
         {/if}
 
-        <!-- ═══ Passo 1: fasce orarie ═══ -->
-        {#if passo === 0}
+        <!-- ═══ Fasce orarie ═══ -->
+        {#if sezioneCorrente === 'fasce'}
             <p class="guidata-intro">
                 Una fascia oraria è l'orario di un turno: da che ora a che ora.
                 Bastano quelli — durata, ore e peso li ricava il programma da sé.
@@ -397,8 +480,13 @@
             </section>
         {/if}
 
-        <!-- ═══ Passo 2: le strutture ═══ -->
-        {#if passo === 1}
+        <!-- ═══ Tipologie turno ═══ -->
+        {#if sezioneCorrente === 'tipologie'}
+            <SezioneTipologie {tipologie} onaggiornate={ontipologieaggiornate} />
+        {/if}
+
+        <!-- ═══ Le strutture ═══ -->
+        {#if sezioneCorrente === 'strutture'}
             <p class="guidata-intro">
                 I turni si svolgono in un luogo: un reparto, un ambulatorio, un
                 presidio. Scegli la parola che usate voi — da qui in avanti il
@@ -468,8 +556,8 @@
             </section>
         {/if}
 
-        <!-- ═══ Passo 3: i turni ═══ -->
-        {#if passo === 2}
+        <!-- ═══ I turni ═══ -->
+        {#if sezioneCorrente === 'turni'}
             <p class="guidata-intro">
                 Per ogni {etichetta.singolare.toLowerCase()}, i turni che ci si
                 svolgono e la fascia oraria in cui cadono. Due turni sulla stessa
@@ -574,11 +662,31 @@
                 </div>
             </section>
         {/if}
+
+        <!-- ═══ Conteggi ═══ -->
+        {#if sezioneCorrente === 'conteggi'}
+            <SezioneConteggi {conteggi} fasce={fasceDisponibili} {tipologie}
+                             onaggiornati={onconteggiaggiornati} />
+        {/if}
+
+        <!-- ═══ Vincoli ═══ -->
+        {#if sezioneCorrente === 'vincoli'}
+            <p class="guidata-intro">
+                I tetti che il riempimento automatico non deve superare: quante
+                notti al mese, quante TC, e gli scostamenti per singolo
+                lavoratore. Si possono lasciare vuoti e metterli più avanti.
+            </p>
+            <section class="guidata-sezione">
+                <VincoliSolver {adminApi} flagTurno={fasce} tipiQualitativo={tipologie}
+                               initGlobali={vincoliGlobali} initSolver={vincoliSolver}
+                               onmsg={(testo, ok) => { if (!ok) errore = testo; }} />
+            </section>
+        {/if}
     </div>
 
     <div class="card-footer d-flex justify-content-between align-items-center">
         <button class="btn btn-outline-secondary btn-sm" disabled={passo === 0}
-                on:click={() => { errore = ''; passo -= 1; }}>
+                on:click={() => vaiA(passo - 1)}>
             <i class="bi bi-arrow-left me-1"></i>Indietro
         </button>
 
@@ -590,16 +698,23 @@
             · {turniTotali} {turniTotali === 1 ? 'turno' : 'turni'}
         </span>
 
-        {#if passo < passi.length - 1}
-            <button class="btn btn-primary btn-sm" disabled={!puoAvanzare}
-                    on:click={() => { errore = ''; passo += 1; }}>
-                Avanti<i class="bi bi-arrow-right ms-1"></i>
+        <div class="d-flex align-items-center gap-2">
+            {#if cosaManca}
+                <span class="text-muted small">{cosaManca}</span>
+            {/if}
+            {#if passo < sezioni.length - 1}
+                <button class="btn btn-outline-primary btn-sm"
+                        on:click={() => vaiA(passo + 1)}>
+                    Avanti<i class="bi bi-arrow-right ms-1"></i>
+                </button>
+            {/if}
+            <button class="btn btn-success btn-sm" disabled={!puoSalvare || salvataggio}
+                    on:click={completa}>
+                {salvataggio ? 'Salvataggio…'
+                 : configurazione ? 'Aggiorna la configurazione'
+                 : 'Salva la configurazione'}
             </button>
-        {:else}
-            <button class="btn btn-success btn-sm" disabled={!puoAvanzare || salvataggio} on:click={completa}>
-                {salvataggio ? 'Creazione…' : 'Crea la struttura turni'}
-            </button>
-        {/if}
+        </div>
     </div>
 </div>
 
