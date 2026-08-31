@@ -268,6 +268,9 @@
     const cfg = await adminApi.getConfig();
     config = cfg.config ?? {};
     leggiEtichettaDaConfig(config);
+    try {
+      configurazioni = (await adminApi.getConfigurazioni()).configurazioni ?? [];
+    } catch { configurazioni = []; }
     try { conteggiConfig = JSON.parse(config['conteggi_context'] || '[]'); } catch { conteggiConfig = []; }
     // Vincoli solver
     const [rvg, rvs] = await Promise.all([
@@ -944,6 +947,40 @@
   }
   // La procedura guidata ha creato il preset: lo si apre nell'editor
   // normale, dove l'utente esperto prosegue a mano.
+  // Riapre una configurazione salvata: la guidata aggiorna quella, invece
+  // di crearne una nuova accanto.
+  function riapriConfigurazione(c) {
+    configurazioneAperta = c;
+    wizardAttivo = true;
+  }
+
+  function nuovaConfigurazione() {
+    configurazioneAperta = null;
+    wizardAttivo = true;
+  }
+
+  /**
+   * Riporta le tabelle di configurazione allo stato salvato.
+   *
+   * I calendari non si toccano: ciascuno porta il proprio snapshot e
+   * continua a leggersi con la configurazione con cui e' stato costruito.
+   */
+  async function attivaConfigurazione(c) {
+    const r = await adminApi.attivaConfigurazione(c.id);
+    if (!r.ok) { setMsg('stru', r.errore, false); return; }
+
+    await caricaTutto();
+    setMsg('stru', `Configurazione "${c.nome}" attivata.`);
+  }
+
+  async function eliminaConfigurazione(id) {
+    const r = await adminApi.delConfigurazione(id);
+    if (!r.ok) { setMsg('stru', r.errore, false); return; }
+
+    configurazioni = (await adminApi.getConfigurazioni()).configurazioni ?? [];
+    setMsg('stru', 'Configurazione eliminata.');
+  }
+
   async function wizardCompletato(presetId, etichetta) {
     etichettaStruttura.set(etichetta);
     wizardAttivo = false;
@@ -2836,14 +2873,53 @@
           <i class="bi bi-plus-lg me-1"></i>Crea preset
         </button>
         <span class="text-muted small">oppure</span>
-        <button class="btn btn-outline-primary btn-sm" on:click={() => wizardAttivo = true}>
-          <i class="bi bi-magic me-1"></i>Procedura guidata
+        <button class="btn btn-outline-primary btn-sm" on:click={nuovaConfigurazione}>
+          <i class="bi bi-compass me-1"></i>Configurazione guidata
         </button>
       </div>
       <div class="form-text small mb-3" style="max-width:540px">
-        La procedura guidata accompagna passo per passo alla creazione di una
-        struttura turni nuova, senza toccare quelle esistenti.
+        La configurazione guidata accompagna in sei sezioni — fasce, tipologie,
+        strutture, turni, conteggi e vincoli — e si può riaprire per
+        aggiornare solo quello che serve.
       </div>
+
+      <!-- ═══ Configurazioni salvate ═══ -->
+      {#if configurazioni.length}
+        <h6 class="text-muted text-uppercase mb-2" style="font-size:.75rem">
+          Configurazioni salvate
+        </h6>
+        <div class="form-text small mb-2" style="max-width:640px">
+          Attivarne una riporta fasce, tipologie, tipi richiesta, regole,
+          vincoli e conteggi allo stato salvato. I calendari già creati non
+          cambiano: ciascuno porta con sé la configurazione con cui è nato.
+        </div>
+        <div class="list-group mb-4" style="max-width:640px">
+          {#each configurazioni as c}
+            <div class="list-group-item d-flex align-items-center gap-2 py-2"
+                 class:list-group-item-success={c.is_attiva}>
+              <i class="bi bi-sliders {c.is_attiva ? 'text-success' : 'text-secondary'}"></i>
+              <div class="flex-grow-1 min-w-0">
+                <span class="fw-semibold">{c.nome}</span>
+                {#if c.is_attiva}<span class="badge bg-success ms-1 small">attiva</span>{/if}
+                {#if c.preset_nome}
+                  <div class="text-muted small">{c.preset_nome}</div>
+                {/if}
+              </div>
+              {#if !c.is_attiva}
+                <button class="btn btn-outline-success btn-sm py-0"
+                        title="Riporta la configurazione a questo stato"
+                        on:click={() => attivaConfigurazione(c)}>Attiva</button>
+              {/if}
+              <button class="btn btn-outline-primary btn-sm py-0"
+                      title="Riapri nella configurazione guidata"
+                      on:click={() => riapriConfigurazione(c)}>Modifica</button>
+              {#if !c.is_attiva}
+                <DeleteButton ondelete={() => eliminaConfigurazione(c.id)} />
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
       {/if}
 
       {#if presets.length === 0}
