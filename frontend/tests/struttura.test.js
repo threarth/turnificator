@@ -188,3 +188,48 @@ test('il nome vuoto o assente non manda in errore la duplicazione', () => {
     assert.equal(nomeDuplicato(null, 'mattina', 'pomeriggio'), '');
 });
 
+
+
+// ---------------------------------------------------------------------------
+// Le tipologie scelte per un turno
+// ---------------------------------------------------------------------------
+
+test('le tipologie scelte arrivano al turno', () => {
+    const [sg] = costruisciStruttura(
+        [{ nome: 'Rad', turni: [
+            { nome: 'TC mattina', flag_id: 11, tipi_qualitativi: [4, 7] },
+        ]}],
+        FASCE, contatoreId()
+    );
+
+    assert.deepEqual(sg.gruppi[0].turni[0].tipi_qualitativi, [4, 7]);
+});
+
+
+test('un turno senza tipologie ne ha una lista vuota, non undefined', () => {
+    const [sg] = costruisciStruttura(
+        [{ nome: 'Rad', turni: [{ nome: 'Guardia', flag_id: 14 }] }],
+        FASCE, contatoreId()
+    );
+
+    assert.deepEqual(sg.gruppi[0].turni[0].tipi_qualitativi, []);
+});
+
+
+test('le tipologie di un turno non si condividono per riferimento', () => {
+    // Due turni dalla stessa lista non devono finire a puntare lo stesso array.
+    const scelte = [4];
+    const [sg] = costruisciStruttura(
+        [{ nome: 'Rad', turni: [
+            { nome: 'A', flag_id: 11, tipi_qualitativi: scelte },
+            { nome: 'B', flag_id: 11, tipi_qualitativi: scelte },
+        ]}],
+        FASCE, contatoreId()
+    );
+
+    const [a, b] = sg.gruppi[0].turni;
+    a.tipi_qualitativi.push(9);
+
+    assert.deepEqual(b.tipi_qualitativi, [4]);
+    assert.deepEqual(scelte, [4]);
+});

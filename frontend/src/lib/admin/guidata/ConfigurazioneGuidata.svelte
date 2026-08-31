@@ -37,10 +37,13 @@
     import { costruisciStruttura, nomeDuplicato } from '../struttura.js';
     import SezioneTipologie from './SezioneTipologie.svelte';
     import SezioneConteggi from './SezioneConteggi.svelte';
+    import SezioneUtenti from './SezioneUtenti.svelte';
 
     export let fasce = [];
     export let tipologie = [];
     export let conteggi = [];
+    export let utenti = [];
+    export let sovragruppi = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
     export let configurazione = null;
     export let vincoliGlobali = [];
@@ -50,6 +53,7 @@
     export let onfasceaggiornate;
     export let ontipologieaggiornate;
     export let onconteggiaggiornati;
+    export let onutentiaggiornati;
 
     // Il turno tipo e' l'unita' di misura del peso, non classifica turni:
     // non va offerto come categoria di una fascia.
@@ -77,6 +81,7 @@
         { id: 'tipologie',  nome: 'Tipologie turno',   chiusa: true },
         { id: 'strutture',  nome: etichetta.plurale,   chiusa: false },
         { id: 'turni',      nome: 'I turni',           chiusa: false },
+        { id: 'utenti',     nome: 'Le persone',        chiusa: true },
         { id: 'conteggi',   nome: 'Conteggi',          chiusa: true },
         { id: 'vincoli',    nome: 'Vincoli',           chiusa: true },
     ];
@@ -200,7 +205,7 @@
         const struttura = strutture[indice];
         struttura.turni = [
             ...struttura.turni,
-            { nome: '', flag_id: fasceDisponibili[0]?.id ?? null },
+            { nome: '', flag_id: fasceDisponibili[0]?.id ?? null, tipi_qualitativi: [] },
         ];
         strutture = [...strutture];
     }
@@ -229,6 +234,8 @@
                 nomeFascia(fasciaCopia)
             ),
             flag_id: fasciaCopia,
+            // Una copia serve a rifare lo stesso turno: le tipologie la seguono.
+            tipi_qualitativi: [...(originale.tipi_qualitativi ?? [])],
         };
 
         struttura.turni = [
@@ -237,6 +244,26 @@
             ...struttura.turni.slice(indiceTurno + 1),
         ];
         strutture = [...strutture];
+    }
+
+    /** Attiva o disattiva una tipologia su un turno. */
+    function commutaTipologia(turno, tipologiaId) {
+        const scelte = turno.tipi_qualitativi ?? [];
+        turno.tipi_qualitativi = scelte.includes(tipologiaId)
+            ? scelte.filter(id => id !== tipologiaId)
+            : [...scelte, tipologiaId];
+        strutture = [...strutture];
+    }
+
+    /** Le tipologie di un turno in parole, per il pulsante che le apre. */
+    function etichettaTipologie(turno) {
+        const scelte = turno.tipi_qualitativi ?? [];
+        if (!scelte.length) return '—';
+
+        return tipologie
+            .filter(t => scelte.includes(t.id))
+            .map(t => t.nome)
+            .join(', ');
     }
 
     function nomeFascia(flagId) {
@@ -580,8 +607,9 @@
                     {#if s.turni.length}
                         <table class="table table-sm align-middle mb-2">
                             <thead><tr>
-                                <th style="width:240px">Nome</th>
-                                <th style="width:230px">Fascia oraria</th>
+                                <th style="width:210px">Nome</th>
+                                <th style="width:210px">Fascia oraria</th>
+                                <th style="width:170px">Tipologia</th>
                                 <th style="width:120px">Duplica in…</th>
                                 <th style="width:80px">Elimina</th>
                             </tr></thead>
@@ -601,6 +629,32 @@
                                                     </option>
                                                 {/each}
                                             </select>
+                                        </td>
+                                        <td>
+                                            {#if tipologie.length}
+                                                <div class="dropdown">
+                                                    <button class="btn btn-outline-secondary btn-sm py-0 dropdown-toggle w-100 text-truncate"
+                                                            data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                                                            aria-expanded="false"
+                                                            title="Che attività si svolge in questo turno">
+                                                        {etichettaTipologie(t)}
+                                                    </button>
+                                                    <ul class="dropdown-menu px-2">
+                                                        {#each tipologie as tipologia}
+                                                            <li>
+                                                                <label class="dropdown-item small d-flex align-items-center gap-2 px-1">
+                                                                    <input type="checkbox"
+                                                                           checked={(t.tipi_qualitativi ?? []).includes(tipologia.id)}
+                                                                           on:change={() => commutaTipologia(t, tipologia.id)} />
+                                                                    {tipologia.nome}
+                                                                </label>
+                                                            </li>
+                                                        {/each}
+                                                    </ul>
+                                                </div>
+                                            {:else}
+                                                <span class="text-muted small">nessuna definita</span>
+                                            {/if}
                                         </td>
                                         <td>
                                             <div class="btn-group">
@@ -661,6 +715,12 @@
                            use:focusOnMount placeholder="es. 2026" bind:value={nomePreset} />
                 </div>
             </section>
+        {/if}
+
+        <!-- ═══ Le persone ═══ -->
+        {#if sezioneCorrente === 'utenti'}
+            <SezioneUtenti {utenti} strutture={sovragruppi} {etichetta}
+                           onaggiornati={onutentiaggiornati} />
         {/if}
 
         <!-- ═══ Conteggi ═══ -->

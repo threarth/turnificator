@@ -2842,6 +2842,7 @@
 
       <ConfigurazioneGuidata fasce={flagTurno} tipologie={tipiQualitativo}
                              conteggi={conteggiConfig}
+                             {utenti} sovragruppi={sovragruppiDisponibili}
                              etichetta={$etichettaStruttura}
                              configurazione={configurazioneAperta}
                              {vincoliGlobali} {vincoliSolver}
@@ -2856,6 +2857,9 @@
                              onconteggiaggiornati={async (nuovi) => {
                                conteggiConfig = nuovi;
                                await salvaConteggi();
+                             }}
+                             onutentiaggiornati={async () => {
+                               utenti = (await adminApi.getUtenti()).utenti ?? [];
                              }} />
 
     {:else if !editPreset}

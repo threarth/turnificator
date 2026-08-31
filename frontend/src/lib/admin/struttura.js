@@ -10,8 +10,8 @@
 
 // Valori con cui nasce un turno: priorita' automatica, aperto nei soli giorni
 // feriali, visibile. L'utente li rifinisce poi nell'editor della struttura.
+// Le tipologie non stanno qui: le sceglie l'utente turno per turno.
 const TURNO_DEFAULT = {
-    tipi_qualitativi: [],
     priorita_solver: 'automatico',
     peso_priorita_solver: 50,
     apri_festivi: 0,
@@ -46,7 +46,8 @@ export function toSigla(nome) {
  * I turni senza nome o senza fascia vengono ignorati: sono righe che l'utente
  * ha aperto e non ha compilato, non un errore da segnalare.
  *
- * @param {object} struttura — {nome, ambito, turni: [{nome, flag_id}]}.
+ * @param {object} struttura — {nome, ambito, turni: [{nome, flag_id,
+ *                              tipi_qualitativi}]}.
  * @param {Array} fasce — flag_turno disponibili.
  * @param {Function} nuovoId — genera un id temporaneo non intero.
  * @returns {Array} gruppi pronti per l'API, in ordine di orario.
@@ -75,6 +76,7 @@ export function gruppiDellaStruttura(struttura, fasce, nuovoId) {
             id: nuovoId(),
             sigla: `${toSigla(turno.nome)}_${gruppo.sigla}`,
             nome: turno.nome.trim(),
+            tipi_qualitativi: [...(turno.tipi_qualitativi ?? [])],
             ...TURNO_DEFAULT,
         });
     }
