@@ -105,6 +105,29 @@ UPDATE flag_turno SET mostra_in_struttura = 0
  WHERE nome IN ('turno_tipo', 'diurno', 'notturno', 'guardia_24h');
 
 -- =============================================================================
+-- TABELLA: configurazioni
+-- Una configurazione salvata: l'intera impostazione del tenant congelata in
+-- uno snapshot, piu' la struttura turni che le corrisponde. Attivarne una
+-- riporta le tabelle di configurazione allo stato che avevano.
+--
+-- I nomi strutturali (turno_tipo, notturno, diurno) restano invarianti fra
+-- una configurazione e l'altra: sono l'impalcatura su cui il codice ragiona.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS configurazioni (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome       TEXT    NOT NULL UNIQUE,
+    snapshot   TEXT    NOT NULL,                 -- JSON, come config_snapshot
+    preset_id  INTEGER REFERENCES struttura_presets(id) ON DELETE SET NULL,
+    is_attiva  INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Una sola configurazione attiva per volta.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_configurazioni_attiva
+    ON configurazioni(is_attiva) WHERE is_attiva = 1;
+
+-- =============================================================================
 -- TABELLA: struttura_presets
 -- Preset riutilizzabili per la struttura turni (sovragruppi→gruppi→turni).
 -- =============================================================================
