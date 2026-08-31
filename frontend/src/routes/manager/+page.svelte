@@ -4267,9 +4267,9 @@
         <div class="text-muted small mb-2">Nessun limite per fascia oraria.</div>
       {/if}
 
-      <!-- Limiti mensili max per caratteristica qualitativa -->
+      <!-- Limiti mensili max per tipologia turno -->
       <h6 class="mt-2 mb-2" style="font-size:.82rem">
-        Limiti mensili max per caratteristica qualitativa
+        Limiti mensili max per tipologia turno
         <button class="btn btn-sm btn-outline-primary ms-2 py-0" style="font-size:.7rem"
                 onclick={() => snapAddVincoloSolver('qualitativo')}>
           <i class="bi bi-plus me-1"></i>Aggiungi
@@ -4318,7 +4318,7 @@
           </tbody>
         </table>
       {:else}
-        <div class="text-muted small mb-2">Nessun limite tipo qualitativo configurato.</div>
+        <div class="text-muted small mb-2">Nessun limite per tipologia.</div>
       {/if}
 
       <!-- Azioni salva/ripristina -->

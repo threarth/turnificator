@@ -329,7 +329,7 @@
            `  - Struttura turni (sigla, flag, stile, ore, priorità)\n` +
            `  - Regole di conflitto\n` +
            `  - Vincoli globali e per utente\n` +
-           `  - Vincoli solver (flag/tipo qualitativo)\n` +
+           `  - Vincoli solver (fascia oraria / tipologia)\n` +
            `  - Esclusioni utente\n` +
            `  - Accesso manager (turni e utenti)\n` +
            `  - Gerarchia flag turno\n` +
@@ -676,21 +676,21 @@
       tipiQualitativo = (await adminApi.getTipiQualitativo()).tipi ?? [];
       nuovoTipoQual = { nome: '', descrizione: '', carico_lavoro: 0 };
       showAddTipoQual = false;
-      setMsg('stru', 'Tipo qualitativo creato.');
+      setMsg('stru', 'Tipologia creata.');
     } else setMsg('stru', r.errore, false);
   }
   async function salvaTipoQual(obj) {
     const r = await adminApi.editTipoQualitativo(obj.id, obj);
     if (r.ok) {
       tipiQualitativo = (await adminApi.getTipiQualitativo()).tipi ?? [];
-      setMsg('stru', 'Tipo qualitativo aggiornato.');
+      setMsg('stru', 'Tipologia aggiornata.');
     } else setMsg('stru', r.errore, false);
   }
   async function eliminaTipoQual(id) {
     const r = await adminApi.delTipoQualitativo(id);
     if (r.ok) {
       tipiQualitativo = (await adminApi.getTipiQualitativo()).tipi ?? [];
-      setMsg('stru', 'Tipo qualitativo eliminato.');
+      setMsg('stru', 'Tipologia eliminata.');
     } else if (r.dipendenze) alert(`${r.errore}\n\n${r.dipendenze.join('\n')}`);
     else setMsg('stru', r.errore, false);
   }
@@ -2238,12 +2238,12 @@
       </div>
     </div>
 
-    <!-- Card Tipi turno per caratteristica qualitativa -->
+    <!-- Card Tipologie turno -->
     <div class="card mb-4" style="max-width:600px">
       <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-        Tipi turno per caratteristica qualitativa
+        Tipologie turno
         <button class="btn btn-sm btn-outline-primary" on:click={() => { showAddTipoQual = !showAddTipoQual; }}>
-          <i class="bi bi-plus me-1"></i>Nuovo tipo qualitativo
+          <i class="bi bi-plus me-1"></i>Nuova tipologia
         </button>
       </div>
       <div class="card-body p-2">

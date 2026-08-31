@@ -72,7 +72,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────
-  // VINCOLI SOLVER (limiti flag/qualitativo) — click-to-edit per riga
+  // VINCOLI SOLVER (limiti per fascia oraria o tipologia) — click-to-edit per riga
   // ─────────────────────────────────────────────────────────────
   function startEditSolver(idx) {
     editingSolverIdx = idx;
@@ -308,7 +308,7 @@
 </table>
 </div>
 
-<!-- ═══════════════ LIMITI MENSILI (fascia oraria + qualitativo) ═══════════════ -->
+<!-- ═══════════════ LIMITI MENSILI (fascia oraria + tipologia) ═══════════════ -->
 <div bind:this={solverRoot}>
 
 <!-- Limiti mensili max per fascia oraria -->
@@ -362,9 +362,9 @@
   <div class="text-muted small mb-2">Nessun limite per fascia oraria.</div>
 {/if}
 
-<!-- Limiti mensili max per caratteristica qualitativa -->
+<!-- Limiti mensili max per tipologia turno -->
 <h6 class="mt-3 mb-2" style="font-size:.85rem">
-  Limiti mensili max per caratteristica qualitativa
+  Limiti mensili max per tipologia turno
   <button class="btn btn-sm btn-outline-primary ms-2" onclick={() => addVincoloSolver('qualitativo')}>
     <i class="bi bi-plus me-1"></i>Aggiungi
   </button>
@@ -410,7 +410,7 @@
     </tbody>
   </table>
 {:else}
-  <div class="text-muted small mb-2">Nessun limite tipo qualitativo configurato.</div>
+  <div class="text-muted small mb-2">Nessun limite per tipologia.</div>
 {/if}
 
 </div>
