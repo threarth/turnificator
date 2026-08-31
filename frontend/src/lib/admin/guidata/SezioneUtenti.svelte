@@ -16,21 +16,44 @@
 -->
 <script>
     import { adminApi } from '$lib/api.js';
+    import { etichettaManager } from '$lib/etichette.js';
 
     export let utenti = [];
     export let strutture = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
     export let onaggiornati;
 
-    // I ruoli detti per quello che permettono di fare.
-    const RUOLI = [
+    // Come si chiama chi pianifica i turni: cambia con il reparto, e la
+    // parola scelta vale in tutto il programma.
+    const NOMI_PIANIFICATORE = [
+        'Caposala', 'Capotecnico', 'Primario', 'Pianificatore',
+    ];
+
+    // I ruoli detti per quello che permettono di fare, non con i nomi interni.
+    $: RUOLI = [
         { valore: 'basic',   nome: 'Lavoratore',
           aiuto: 'Esprime i propri desiderata e vede i turni assegnati.' },
-        { valore: 'manager', nome: 'Caposala',
+        { valore: 'manager', nome: $etichettaManager,
           aiuto: 'Assegna i turni e lavora sui desiderata.' },
         { valore: 'admin',   nome: 'Amministratore',
           aiuto: 'Configura tutto: struttura, calendari, utenti.' },
     ];
+
+    let etichettaLibera = false;
+
+    async function scegliNomePianificatore(nome) {
+        etichettaLibera = nome === null;
+        if (!nome) return;
+
+        etichettaManager.set(nome);
+        await adminApi.setConfig({ etichetta_manager: nome });
+    }
+
+    /** Salva la parola digitata a mano, quando l'utente smette di scrivere. */
+    async function salvaNomeLibero() {
+        const nome = $etichettaManager.trim();
+        if (nome) await adminApi.setConfig({ etichetta_manager: nome });
+    }
 
     let nuovo = utenteVuoto();
     let errore = '';
@@ -70,6 +93,31 @@
 </p>
 
 {#if errore}<div class="alert alert-danger py-2 small">{errore}</div>{/if}
+
+<section class="guidata-sezione">
+    <h6 class="guidata-titolo">Come chiami chi pianifica i turni</h6>
+    <p class="guidata-aiuto">
+        A seconda del reparto è un caposala, un capotecnico o un primario. La
+        parola che scegli comparirà ovunque il programma nomini quel ruolo.
+    </p>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+        {#each NOMI_PIANIFICATORE as nome}
+            <button class="btn btn-sm {!etichettaLibera && $etichettaManager === nome
+                                       ? 'btn-primary' : 'btn-outline-secondary'}"
+                    on:click={() => scegliNomePianificatore(nome)}>{nome}</button>
+        {/each}
+        <button class="btn btn-sm {etichettaLibera ? 'btn-primary' : 'btn-outline-secondary'}"
+                on:click={() => scegliNomePianificatore(null)}>Un'altra parola…</button>
+    </div>
+    {#if etichettaLibera}
+        <div class="mt-2" style="width:220px">
+            <label class="form-label visually-hidden" for="nome-pianificatore">Come lo chiami</label>
+            <input id="nome-pianificatore" class="form-control form-control-sm"
+                   placeholder="es. Coordinatore"
+                   bind:value={$etichettaManager} on:blur={salvaNomeLibero} />
+        </div>
+    {/if}
+</section>
 
 <section class="guidata-sezione">
     <h6 class="guidata-titolo">Le persone già inserite</h6>

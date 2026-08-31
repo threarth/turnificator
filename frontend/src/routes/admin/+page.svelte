@@ -12,7 +12,8 @@
   import FlagRow from '$lib/admin/FlagRow.svelte';
   import FlagForm from '$lib/admin/FlagForm.svelte';
   import ConfigurazioneGuidata from '$lib/admin/guidata/ConfigurazioneGuidata.svelte';
-  import { etichettaStruttura, leggiEtichettaDaConfig } from '$lib/etichette.js';
+  import { etichettaStruttura, etichettaManager,
+           leggiEtichettaDaConfig, leggiEtichettaManager } from '$lib/etichette.js';
   import { decToHm, hmToDec, hmToMin, minToHm } from '$lib/admin/durate.js';
   import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
@@ -268,6 +269,7 @@
     const cfg = await adminApi.getConfig();
     config = cfg.config ?? {};
     leggiEtichettaDaConfig(config);
+    leggiEtichettaManager(config);
     try {
       configurazioni = (await adminApi.getConfigurazioni()).configurazioni ?? [];
     } catch { configurazioni = []; }
@@ -925,6 +927,15 @@
   // ── Struttura preset ───────────────────────────────────────────
 
   // Auto-sigla da nome
+  // I ruoli si mostrano con le parole dell'utente; nel database restano
+  // 'basic', 'manager' e 'admin'.
+  function nomeRuolo(ruolo) {
+    if (ruolo === 'manager') return $etichettaManager.toLowerCase();
+    if (ruolo === 'basic') return 'lavoratore';
+    if (ruolo === 'admin') return 'amministratore';
+    return ruolo;
+  }
+
   function toSigla(nome) {
     return nome.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'X';
   }
@@ -1893,9 +1904,9 @@
             <input class="form-control form-control-sm" type="password" bind:value={nuovoUtente.password} /></div>
           <div class="col-auto"><label class="form-label small">Ruolo</label>
             <select class="form-select form-select-sm" bind:value={nuovoUtente.role}>
-              <option value="basic">basic</option>
-              <option value="manager">manager</option>
-              <option value="admin">admin</option>
+              <option value="basic">lavoratore</option>
+              <option value="manager">{$etichettaManager.toLowerCase()}</option>
+              <option value="admin">amministratore</option>
             </select></div>
           <div class="col-auto"><label class="form-label small">Sigla</label>
             <input class="form-control form-control-sm" bind:value={nuovoUtente.sigla} style="width:80px" /></div>
@@ -1976,9 +1987,9 @@
           </select>
         {:else if bulkCampo === 'role'}
           <select class="form-select form-select-sm" style="width:auto" bind:value={bulkValore}>
-            <option value="basic">basic</option>
-            <option value="manager">manager</option>
-            <option value="admin">admin</option>
+            <option value="basic">lavoratore</option>
+            <option value="manager">{$etichettaManager.toLowerCase()}</option>
+            <option value="admin">amministratore</option>
           </select>
         {:else if bulkCampo === 'offusca'}
           <select class="form-select form-select-sm" style="width:auto" bind:value={bulkValore}>
@@ -2032,7 +2043,7 @@
                 <td data-field="role">
                   <select class="form-select form-select-sm" style="width:100px" bind:value={editingUtente.role}
                           on:keydown={editRowKeydown(salvaUtente, () => editingUtente=null)}>
-                    <option value="basic">basic</option><option value="manager">manager</option><option value="admin">admin</option>
+                    <option value="basic">lavoratore</option><option value="manager">{$etichettaManager.toLowerCase()}</option><option value="admin">amministratore</option>
                   </select>
                 </td>
                 <td data-field="sovragruppo_id">
@@ -2107,7 +2118,7 @@
                 </td>
                 <td class="fw-bold" data-field="sigla">{u.sigla}</td>
                 <td data-field="username">{u.username}</td>
-                <td data-field="role"><span class="badge bg-secondary">{u.role}</span></td>
+                <td data-field="role"><span class="badge bg-secondary">{nomeRuolo(u.role)}</span></td>
                 <td data-field="sovragruppo_id">
                   {#if u.sovragruppo_sigla}
                     <span class="badge bg-info text-dark" style="font-size:.7rem" title={u.sovragruppo_nome || ''}>{u.sovragruppo_sigla}</span>
