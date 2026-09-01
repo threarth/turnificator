@@ -74,6 +74,10 @@ from flask import Blueprint, request, jsonify, current_app
 from app.auth import require_role, get_current_user, hash_password
 from app.db import query_one, query_all, execute_write, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
+from app.services.config_snapshot import crea_config_snapshot
+from app.services.proposte import (
+    applica as applica_proposta, confronta, e_senza_effetto
+)
 from app.services.fasce_orarie import (
     NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
     FormatoOrarioNonValido, parse_orario, ricalcola_tutte
@@ -468,6 +472,101 @@ def ripristina_flag_default():
     ricalcola_tutte(db)
 
     return jsonify({'ok': True, 'messaggio': 'Flag default ripristinati.'}), 200
+
+
+# =============================================================================
+# PROPOSTE DI CONFIGURAZIONE (dal master)
+# =============================================================================
+
+# Stati di una proposta: in attesa finche' l'amministratore non decide.
+STATO_IN_ATTESA = 'in_attesa'
+
+
+def _proposta_in_attesa():
+    """La proposta che aspetta una decisione, se c'e'."""
+    return query_one(
+        "SELECT id, nome, proposta, proposta_da, note, created_at "
+        "FROM proposte_configurazione WHERE stato = ?",
+        (STATO_IN_ATTESA,)
+    )
+
+
+@bp.route('/proposta', methods=['GET'])
+@require_role('admin')
+def leggi_proposta():
+    """
+    La proposta in attesa, con il confronto rispetto a quello che c'e' ora.
+
+    Il confronto e' la ragione per cui la proposta e' accettabile: senza,
+    l'amministratore direbbe di si' alla cieca.
+    """
+    riga = _proposta_in_attesa()
+    if not riga:
+        return jsonify({'ok': True, 'proposta': None}), 200
+
+    try:
+        parti = json.loads(riga['proposta'])
+    except (json.JSONDecodeError, TypeError):
+        current_app.logger.warning('Proposta %s illeggibile', riga['id'])
+        return jsonify({'ok': False, 'errore': 'La proposta non è leggibile.'}), 500
+
+    differenze = confronta(parti, json.loads(crea_config_snapshot()))
+
+    return jsonify({
+        'ok': True,
+        'proposta': {
+            'id': riga['id'], 'nome': riga['nome'],
+            'proposta_da': riga['proposta_da'], 'note': riga['note'],
+            'created_at': riga['created_at'],
+            'differenze': differenze,
+            'senza_effetto': e_senza_effetto(differenze),
+        },
+    }), 200
+
+
+@bp.route('/proposta/<int:pid>/accetta', methods=['PUT'])
+@require_role('admin')
+def accetta_proposta(pid):
+    """Allinea il vocabolario del tenant alla proposta."""
+    riga = query_one(
+        "SELECT proposta FROM proposte_configurazione WHERE id=? AND stato=?",
+        (pid, STATO_IN_ATTESA)
+    )
+    if not riga:
+        return jsonify({'ok': False, 'errore': 'Nessuna proposta in attesa.'}), 404
+
+    utente = get_current_user()
+    try:
+        esito = applica_proposta(get_db(), json.loads(riga['proposta']))
+    except Exception as e:
+        current_app.logger.warning('Applicazione proposta %s fallita: %s', pid, e)
+        return jsonify({'ok': False, 'errore': 'Applicazione non riuscita.'}), 500
+
+    # Durate, ore e peso discendono dagli orari appena arrivati.
+    ricalcola_tutte(get_db())
+
+    execute_write(
+        "UPDATE proposte_configurazione SET stato='accettata', "
+        "decisa_at=datetime('now'), decisa_da=? WHERE id=?",
+        (utente['username'], pid)
+    )
+    return jsonify({'ok': True, 'esito': esito}), 200
+
+
+@bp.route('/proposta/<int:pid>/rifiuta', methods=['PUT'])
+@require_role('admin')
+def rifiuta_proposta(pid):
+    """Lascia la configurazione com'e' e chiude la proposta."""
+    utente = get_current_user()
+    cur = execute_write(
+        "UPDATE proposte_configurazione SET stato='rifiutata', "
+        "decisa_at=datetime('now'), decisa_da=? WHERE id=? AND stato=?",
+        (utente['username'], pid, STATO_IN_ATTESA)
+    )
+    if not cur.rowcount:
+        return jsonify({'ok': False, 'errore': 'Nessuna proposta in attesa.'}), 404
+
+    return jsonify({'ok': True, 'messaggio': 'Proposta rifiutata.'}), 200
 
 
 # =============================================================================

@@ -231,3 +231,123 @@ def test_cio_che_il_tenant_ha_in_piu_sopravvive(tenant):
     dopo = {r[0] for r in tenant.execute("SELECT nome FROM flag_turno")}
     assert prima <= dopo
     assert _flag(tenant, 'mattina')['orario_inizio'] == '07:30'
+
+
+# ---------------------------------------------------------------------------
+# Il giro completo: il master propone, il tenant decide
+# ---------------------------------------------------------------------------
+
+def _configurazione_del_tenant(client, master_token, auth, tenant_id=1):
+    """Legge dal master il vocabolario di un tenant."""
+    rv = client.get(f'/api/master/tenants/{tenant_id}/configurazione',
+                    headers=auth(master_token))
+    assert rv.status_code == 200, rv.get_json()
+    return rv.get_json()['configurazione']
+
+
+def test_senza_proposte_il_tenant_non_vede_nulla(client, admin_token, auth):
+    rv = client.get('/api/admin/proposta', headers=auth(admin_token))
+    assert rv.status_code == 200
+    assert rv.get_json()['proposta'] is None
+
+
+def test_il_master_propone_e_il_tenant_vede_il_confronto(
+        client, master_token, admin_token, auth):
+    """Il percorso che conta: proporre non applica, mostra."""
+    parti = _configurazione_del_tenant(client, master_token, auth)
+    parti['flag_turno'].append({
+        'id': 9001, 'nome': 'sera', 'parent_id': None, 'descrizione': 'Fascia serale',
+        'orario_inizio': '16:00', 'orario_fine': '22:20', 'pausa_minuti': 10,
+        'mostra_in_struttura': 1, 'tipo': 'lavorativo',
+        'ore_primo_giorno': None, 'ore_ultimo_giorno': None,
+    })
+
+    rv = client.post('/api/master/tenants/1/proposta',
+                     json={'nome': 'Radiologia tipo', 'configurazione': parti,
+                           'note': 'Allineamento fasce'},
+                     headers=auth(master_token))
+    assert rv.status_code == 201, rv.get_json()
+
+    rv = client.get('/api/admin/proposta', headers=auth(admin_token))
+    proposta = rv.get_json()['proposta']
+
+    assert proposta['nome'] == 'Radiologia tipo'
+    assert proposta['note'] == 'Allineamento fasce'
+    assert not proposta['senza_effetto']
+
+    fasce = next(p for p in proposta['differenze'] if p['chiave'] == 'flag_turno')
+    assert [n['nome'] for n in fasce['nuove']] == ['sera']
+
+    # Proporre non applica: la fascia non c'e' ancora.
+    rv = client.get('/api/admin/flag-turno', headers=auth(admin_token))
+    assert not [f for f in rv.get_json()['flags'] if f['nome'] == 'sera']
+
+
+def test_accettare_applica_e_chiude_la_proposta(
+        client, master_token, admin_token, auth):
+    parti = _configurazione_del_tenant(client, master_token, auth)
+    parti['flag_turno'].append({
+        'id': 9002, 'nome': 'sera_lunga', 'parent_id': None, 'descrizione': '',
+        'orario_inizio': '14:00', 'orario_fine': '02:00', 'pausa_minuti': 10,
+        'mostra_in_struttura': 1, 'tipo': 'lavorativo',
+        'ore_primo_giorno': None, 'ore_ultimo_giorno': None,
+    })
+    client.post('/api/master/tenants/1/proposta',
+                json={'nome': 'Con sera lunga', 'configurazione': parti},
+                headers=auth(master_token))
+
+    pid = client.get('/api/admin/proposta', headers=auth(admin_token)).get_json()['proposta']['id']
+    rv = client.put(f'/api/admin/proposta/{pid}/accetta', headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    flags = client.get('/api/admin/flag-turno', headers=auth(admin_token)).get_json()['flags']
+    creata = next(f for f in flags if f['nome'] == 'sera_lunga')
+    # Il ricalcolo e' scattato: le durate discendono dagli orari arrivati.
+    assert creata['durata_netta_minuti'] == 720
+
+    assert client.get('/api/admin/proposta', headers=auth(admin_token)).get_json()['proposta'] is None
+
+
+def test_rifiutare_lascia_tutto_com_era(client, master_token, admin_token, auth):
+    parti = _configurazione_del_tenant(client, master_token, auth)
+    parti['flag_turno'].append({
+        'id': 9003, 'nome': 'mai_creata', 'parent_id': None, 'descrizione': '',
+        'orario_inizio': '10:00', 'orario_fine': '16:00', 'pausa_minuti': 10,
+        'mostra_in_struttura': 1, 'tipo': 'lavorativo',
+        'ore_primo_giorno': None, 'ore_ultimo_giorno': None,
+    })
+    client.post('/api/master/tenants/1/proposta',
+                json={'nome': 'Da rifiutare', 'configurazione': parti},
+                headers=auth(master_token))
+
+    pid = client.get('/api/admin/proposta', headers=auth(admin_token)).get_json()['proposta']['id']
+    rv = client.put(f'/api/admin/proposta/{pid}/rifiuta', headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    flags = client.get('/api/admin/flag-turno', headers=auth(admin_token)).get_json()['flags']
+    assert not [f for f in flags if f['nome'] == 'mai_creata']
+    assert client.get('/api/admin/proposta', headers=auth(admin_token)).get_json()['proposta'] is None
+
+
+def test_una_seconda_proposta_supera_la_prima(client, master_token, admin_token, auth):
+    """Due in attesa metterebbero l'admin a scegliere fra cose non richieste."""
+    parti = _configurazione_del_tenant(client, master_token, auth)
+
+    client.post('/api/master/tenants/1/proposta',
+                json={'nome': 'Prima', 'configurazione': parti}, headers=auth(master_token))
+    client.post('/api/master/tenants/1/proposta',
+                json={'nome': 'Seconda', 'configurazione': parti}, headers=auth(master_token))
+
+    proposta = client.get('/api/admin/proposta', headers=auth(admin_token)).get_json()['proposta']
+    assert proposta['nome'] == 'Seconda'
+
+
+def test_una_proposta_identica_lo_dichiara(client, master_token, admin_token, auth):
+    """Meglio dirlo prima che far accettare il nulla."""
+    parti = _configurazione_del_tenant(client, master_token, auth)
+
+    client.post('/api/master/tenants/1/proposta',
+                json={'nome': 'Uguale', 'configurazione': parti}, headers=auth(master_token))
+
+    proposta = client.get('/api/admin/proposta', headers=auth(admin_token)).get_json()['proposta']
+    assert proposta['senza_effetto'] is True

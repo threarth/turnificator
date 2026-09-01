@@ -128,6 +128,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_configurazioni_attiva
     ON configurazioni(is_attiva) WHERE is_attiva = 1;
 
 -- =============================================================================
+-- TABELLA: proposte_configurazione
+-- Il master non impone una configurazione: la deposita qui, e
+-- l'amministratore del tenant la confronta con quella in uso e decide.
+-- Sta nel database del tenant perche' cosi' si legge e si accetta anche
+-- quando il master e' irraggiungibile.
+--
+-- La proposta contiene solo le parti trasferibili fra reparti: fasce orarie
+-- e assenze, tipologie turno, tipi richiesta, regole di conflitto.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS proposte_configurazione (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome        TEXT    NOT NULL,               -- come il master la chiama
+    proposta    TEXT    NOT NULL,               -- JSON delle quattro parti
+    proposta_da TEXT    NOT NULL,               -- master admin che l'ha inviata
+    note        TEXT,                           -- perche' la propone
+    stato       TEXT    NOT NULL DEFAULT 'in_attesa'
+                    CHECK(stato IN ('in_attesa', 'accettata', 'rifiutata', 'ritirata')),
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    decisa_at   TEXT,
+    decisa_da   TEXT                            -- admin del tenant che ha deciso
+);
+
+-- Una proposta in attesa per volta: due contemporanee metterebbero
+-- l'amministratore a scegliere fra cose che non ha chiesto.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposte_in_attesa
+    ON proposte_configurazione(stato) WHERE stato = 'in_attesa';
+
+-- =============================================================================
 -- TABELLA: struttura_presets
 -- Preset riutilizzabili per la struttura turni (sovragruppi→gruppi→turni).
 -- =============================================================================

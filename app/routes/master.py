@@ -949,6 +949,138 @@ def crea_template_da_tenant(tenant_id):
 # Configurazione globale master
 # =========================================================================
 
+# =============================================================================
+# PROPOSTE DI CONFIGURAZIONE AI TENANT
+# =============================================================================
+
+def _estrai_parti_proponibili(db):
+    """
+    Legge da un tenant le sole parti che si possono proporre altrove.
+
+    Il servizio `proposte` dichiara quali sono e con che nome si riconoscono;
+    qui si va a prenderle, con le colonne che servono a ricostruirle.
+
+    Args:
+        db: connessione al database del tenant.
+
+    Returns:
+        dict: le quattro parti, ciascuna come lista di righe.
+    """
+    query = {
+        'flag_turno':
+            "SELECT id, nome, parent_id, descrizione, orario_inizio, orario_fine, "
+            "pausa_minuti, ore_primo_giorno, ore_ultimo_giorno, "
+            "mostra_in_struttura, tipo FROM flag_turno",
+        'tipi_qualitativo':
+            "SELECT id, nome, descrizione, carico_lavoro FROM tipi_qualitativo",
+        'tipi_richiesta':
+            "SELECT id, sigla, descrizione, tipo, counting_flag, flag_id, "
+            "ore_default, ordine FROM tipi_richiesta",
+        'regole_conflitto':
+            "SELECT id, nome, tipo_regola, flag_a_id, flag_b_id, offset_giorni, "
+            "categoria, stile, blocca_inserimento, peso_numerico "
+            "FROM regole_conflitto",
+    }
+
+    return {
+        chiave: [dict(r) for r in db.execute(sql).fetchall()]
+        for chiave, sql in query.items()
+    }
+
+
+def _apri_tenant(slug):
+    """
+    Connessione al database di un tenant.
+
+    Args:
+        slug (str): identificativo del tenant.
+
+    Returns:
+        connessione SQLCipher.
+    """
+    percorso = os.path.join(
+        current_app.config['TENANT_DB_DIR'], f'tenant_{slug}.db'
+    )
+    return _open_db(percorso, _get_tenant_key(slug))
+
+
+@bp.route('/tenants/<int:tenant_id>/configurazione', methods=['GET'])
+@require_master_role()
+def leggi_configurazione_tenant(tenant_id):
+    """
+    Il vocabolario di un tenant, nella forma in cui si puo' proporre altrove.
+
+    Serve al master per due cose: vedere com'e' fatto un tenant, e prendere
+    da uno ben configurato il materiale da proporre agli altri.
+    """
+    tenant = get_master_db().execute(
+        "SELECT slug, nome FROM tenants WHERE id=?", (tenant_id,)
+    ).fetchone()
+    if not tenant:
+        return jsonify({'ok': False, 'errore': 'Tenant non trovato.'}), 404
+
+    try:
+        db = _apri_tenant(tenant['slug'])
+        parti = _estrai_parti_proponibili(db)
+    except Exception as e:
+        current_app.logger.warning(
+            'Lettura configurazione del tenant %s fallita: %s', tenant['slug'], e
+        )
+        return jsonify({'ok': False, 'errore': 'Database del tenant non leggibile.'}), 500
+
+    return jsonify({
+        'ok': True, 'tenant': tenant['nome'], 'configurazione': parti,
+    }), 200
+
+
+@bp.route('/tenants/<int:tenant_id>/proposta', methods=['POST'])
+@require_master_role()
+def proponi_configurazione(tenant_id):
+    """
+    Deposita una proposta nel database del tenant.
+
+    Non applica niente: sara' l'amministratore del tenant a confrontarla con
+    quello che ha e a decidere. Una proposta in attesa per volta.
+
+    Body JSON: { nome, configurazione, note? }
+    """
+    tenant = get_master_db().execute(
+        "SELECT slug FROM tenants WHERE id=?", (tenant_id,)
+    ).fetchone()
+    if not tenant:
+        return jsonify({'ok': False, 'errore': 'Tenant non trovato.'}), 404
+
+    dati = request.get_json(silent=True) or {}
+    nome = (dati.get('nome') or '').strip()
+    configurazione = dati.get('configurazione')
+    if not nome or not configurazione:
+        return jsonify({
+            'ok': False, 'errore': 'Servono un nome e una configurazione.'
+        }), 400
+
+    try:
+        db = _apri_tenant(tenant['slug'])
+        # Una in attesa per volta: la precedente si intende superata.
+        db.execute(
+            "UPDATE proposte_configurazione SET stato='ritirata', "
+            "decisa_at=datetime('now') WHERE stato='in_attesa'"
+        )
+        db.execute(
+            "INSERT INTO proposte_configurazione (nome, proposta, proposta_da, note) "
+            "VALUES (?,?,?,?)",
+            (nome, json.dumps(configurazione), get_current_master_user()['username'],
+             (dati.get('note') or '').strip() or None)
+        )
+        db.commit()
+    except Exception as e:
+        current_app.logger.warning(
+            'Proposta al tenant %s fallita: %s', tenant['slug'], e
+        )
+        return jsonify({'ok': False, 'errore': 'Invio della proposta non riuscito.'}), 500
+
+    return jsonify({'ok': True, 'messaggio': 'Proposta inviata.'}), 201
+
+
 @bp.route('/config', methods=['GET'])
 @require_master_role()
 def get_master_config():
