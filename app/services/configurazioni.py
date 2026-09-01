@@ -1,10 +1,14 @@
 """
-app/services/configurazioni.py — configurazioni salvate e commutabili.
+app/services/configurazioni.py — snapshot di configurazione applicabili.
 
-Nuova feature. Una configurazione e' l'intera impostazione del tenant —
-fasce orarie, tipologie, tipi richiesta, regole, vincoli, conteggi —
-congelata in uno snapshot, piu' la struttura turni che le corrisponde.
-Attivarne una riporta le tabelle di configurazione a quello stato.
+Una configurazione e' l'intera impostazione di un tenant — fasce orarie,
+tipologie, tipi richiesta, regole, vincoli, conteggi — congelata in uno
+snapshot. Applicarla riporta le tabelle di configurazione a quello stato.
+
+**Un tenant ne ha una sola**, quella viva: dentro il tenant non c'e' niente da
+commutare, e la configurazione manuale scrive direttamente sulle tabelle. Il
+servizio serve al livello master, che tiene configurazioni di riferimento da
+duplicare e assegnare ai tenant.
 
 Perche' funzioni senza rompere i calendari gia' costruiti valgono due
 invarianti:

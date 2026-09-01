@@ -74,9 +74,6 @@ from flask import Blueprint, request, jsonify, current_app
 from app.auth import require_role, get_current_user, hash_password
 from app.db import query_one, query_all, execute_write, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
-from app.services.configurazioni import (
-    ConfigurazioneNonValida, attiva_configurazione, salva_configurazione
-)
 from app.services.fasce_orarie import (
     NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
     FormatoOrarioNonValido, parse_orario, ricalcola_tutte
@@ -471,82 +468,6 @@ def ripristina_flag_default():
     ricalcola_tutte(db)
 
     return jsonify({'ok': True, 'messaggio': 'Flag default ripristinati.'}), 200
-
-
-# =============================================================================
-# CONFIGURAZIONI SALVATE
-# =============================================================================
-
-@bp.route('/configurazioni', methods=['GET'])
-@require_role('admin')
-def lista_configurazioni():
-    """Le configurazioni salvate, con la struttura turni di ciascuna."""
-    righe = query_all(
-        "SELECT c.id, c.nome, c.preset_id, c.is_attiva, c.created_at, c.updated_at, "
-        "sp.nome AS preset_nome "
-        "FROM configurazioni c "
-        "LEFT JOIN struttura_presets sp ON c.preset_id = sp.id "
-        "ORDER BY c.is_attiva DESC, c.nome",
-        ()
-    )
-    return jsonify({'ok': True, 'configurazioni': righe}), 200
-
-
-@bp.route('/configurazioni', methods=['POST'])
-@require_role('admin')
-def crea_configurazione():
-    """Congela la configurazione corrente sotto un nome."""
-    dati = request.get_json(silent=True) or {}
-    nome = (dati.get('nome') or '').strip()
-    if not nome:
-        return jsonify({'ok': False, 'errore': 'Nome obbligatorio.'}), 400
-
-    try:
-        cid = salva_configurazione(get_db(), nome, dati.get('preset_id'))
-    except Exception as e:
-        current_app.logger.warning('Salvataggio configurazione fallito: %s', e)
-        return jsonify({'ok': False, 'errore': 'Salvataggio non riuscito.'}), 500
-
-    return jsonify({'ok': True, 'id': cid}), 201
-
-
-@bp.route('/configurazioni/<int:cid>/attiva', methods=['PUT'])
-@require_role('admin')
-def attiva_configurazione_salvata(cid):
-    """
-    Riporta le tabelle di configurazione allo stato salvato.
-
-    Non tocca i calendari: ciascuno porta il proprio snapshot e continua a
-    leggersi con la configurazione con cui e' stato costruito.
-    """
-    try:
-        scritte = attiva_configurazione(get_db(), cid)
-    except ConfigurazioneNonValida as e:
-        return jsonify({'ok': False, 'errore': str(e)}), 409
-    except Exception as e:
-        current_app.logger.warning('Attivazione configurazione fallita: %s', e)
-        return jsonify({'ok': False, 'errore': 'Attivazione non riuscita.'}), 500
-
-    return jsonify({'ok': True, 'scritte': scritte}), 200
-
-
-@bp.route('/configurazioni/<int:cid>', methods=['DELETE'])
-@require_role('admin')
-def elimina_configurazione(cid):
-    """Elimina una configurazione salvata. Quella attiva non si elimina."""
-    riga = query_one("SELECT is_attiva FROM configurazioni WHERE id=?", (cid,))
-    if not riga:
-        return jsonify({'ok': False, 'errore': 'Configurazione non trovata.'}), 404
-
-    if riga['is_attiva']:
-        return jsonify({
-            'ok': False,
-            'errore': 'La configurazione attiva non si elimina: attivane '
-                      "un'altra prima."
-        }), 409
-
-    execute_write("DELETE FROM configurazioni WHERE id=?", (cid,))
-    return jsonify({'ok': True, 'messaggio': 'Configurazione eliminata.'}), 200
 
 
 # =============================================================================

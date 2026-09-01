@@ -19,7 +19,7 @@
     - tipologie       : Array — tipi qualitativo
     - conteggi        : Array — conteggi del context menu
     - etichetta       : {singolare, plurale} — come l'utente chiama le strutture
-    - configurazione  : {nome, preset_id}|null — quella da aggiornare, se si rientra
+    - presetEsistente : la struttura turni del tenant, se già creata
     - adminApi        : il client API, per le sezioni che lo usano
     - tipiQualitativo, vincoliGlobali, vincoliSolver — passati a VincoliSolver
     - oncompletata    : (presetId, etichetta) => void — configurazione salvata
@@ -45,9 +45,9 @@
     export let utenti = [];
     export let sovragruppi = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
-    export let configurazione = null;
     export let vincoliGlobali = [];
     export let vincoliSolver = [];
+    export let presetEsistente = null;
     export let oncompletata;
     export let onannulla;
     export let onfasceaggiornate;
@@ -301,14 +301,13 @@
     /**
      * Trova la struttura turni su cui scrivere.
      *
-     * Rientrando in una configurazione gia' salvata si aggiorna la sua,
-     * invece di lasciarne dietro una copia a ogni giro. Le strutture create a
-     * mano vivono in altri preset e non vengono toccate.
+     * Il tenant ne ha una sola: se esiste si aggiorna quella, altrimenti la
+     * si crea. Riaprire la guidata non lascia copie dietro di se'.
      *
-     * @returns {Promise<number|null>} id del preset, null se la creazione fallisce
+     * @returns {Promise<number|null>} id della struttura, null se fallisce
      */
     async function presetDaAggiornare() {
-        if (configurazione?.preset_id) return configurazione.preset_id;
+        if (presetEsistente?.id) return presetEsistente.id;
 
         const creato = await adminApi.creaPreset({ nome: nomeCompletoPreset(nomePreset) });
         if (!creato.ok) {
@@ -342,18 +341,6 @@
             etichetta_strutture: etichetta.plurale.trim(),
         });
 
-        // La configurazione congela tutto sotto il nome scelto: rientrando,
-        // lo stesso nome la aggiorna invece di aggiungerne una.
-        const conf = await adminApi.salvaConfigurazione({
-            nome: nomePreset.trim(),
-            preset_id: presetId,
-        });
-        if (!conf.ok) {
-            errore = conf.errore || 'Salvataggio della configurazione non riuscito.';
-            salvataggio = false;
-            return;
-        }
-
         salvataggio = false;
         oncompletata(presetId, { ...etichetta });
     }
@@ -370,15 +357,12 @@
         <div>
             <div class="fw-semibold">
                 <i class="bi bi-compass me-2"></i>Configurazione guidata
-                {#if configurazione}
-                    <span class="text-muted fw-normal small ms-1">— {configurazione.nome}</span>
-                {/if}
             </div>
             <div class="text-muted small">
-                {#if configurazione}
+                {#if presetEsistente}
                     Aggiorna quello che serve: puoi andare direttamente alla sezione che ti interessa.
                 {:else}
-                    Sei sezioni, percorribili in ordine o saltando a quella che serve.
+                    Sette sezioni, percorribili in ordine o saltando a quella che serve.
                 {/if}
             </div>
         </div>
@@ -771,7 +755,7 @@
             <button class="btn btn-success btn-sm" disabled={!puoSalvare || salvataggio}
                     on:click={completa}>
                 {salvataggio ? 'Salvataggio…'
-                 : configurazione ? 'Aggiorna la configurazione'
+                 : presetEsistente ? 'Aggiorna la configurazione'
                  : 'Salva la configurazione'}
             </button>
         </div>
