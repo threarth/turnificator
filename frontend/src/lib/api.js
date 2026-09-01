@@ -155,6 +155,11 @@ export const adminApi = {
 
   getConfig:  ()       => api.get('/api/admin/config'),
 
+  // Proposte di configurazione dal master: si leggono, non si subiscono
+  getProposta:     ()   => api.get('/api/admin/proposta'),
+  accettaProposta: (id) => api.put(`/api/admin/proposta/${id}/accetta`, {}),
+  rifiutaProposta: (id) => api.put(`/api/admin/proposta/${id}/rifiuta`, {}),
+
   setConfig:  (dati)   => api.put('/api/admin/config', dati),
 
   // Vincoli solver
@@ -393,6 +398,8 @@ export const masterApi = {
 
     // Configurazione globale
     getConfig:  () => api.get('/api/master/config'),
+    getConfigurazioneTenant: (id) => api.get(`/api/master/tenants/${id}/configurazione`),
+    proponiConfigurazione:   (id, dati) => api.post(`/api/master/tenants/${id}/proposta`, dati),
     setConfig:  (dati) => api.put('/api/master/config', dati),
 
     // Audit log impersonation

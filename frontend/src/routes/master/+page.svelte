@@ -1,4 +1,5 @@
 <script>
+    import ProponiConfigurazione from '$lib/master/ProponiConfigurazione.svelte';
     /**
      * Master Admin — Dashboard tenant.
      *
@@ -21,6 +22,7 @@
 
     // Form nuovo tenant
     let showForm = false;
+    let showProponi = false;
     let formNome = '';
     let formSlug = '';
     let formTemplateId = '';
@@ -178,9 +180,14 @@
 <div class="container-fluid py-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3 class="mb-0"><i class="bi bi-building me-2"></i>Gestione Tenant</h3>
-        <button class="btn btn-primary" on:click={() => { showForm = !showForm; formErrore = ''; }}>
-            <i class="bi bi-plus-lg me-1"></i>Nuovo Tenant
-        </button>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-primary" on:click={() => showProponi = !showProponi}>
+                <i class="bi bi-send me-1"></i>Proponi configurazione
+            </button>
+            <button class="btn btn-primary" on:click={() => { showForm = !showForm; formErrore = ''; }}>
+                <i class="bi bi-plus-lg me-1"></i>Nuovo Tenant
+            </button>
+        </div>
     </div>
 
     {#if successo}
@@ -194,6 +201,10 @@
             {errore}
             <button type="button" class="btn-close" on:click={() => errore = ''}></button>
         </div>
+    {/if}
+
+    {#if showProponi}
+        <ProponiConfigurazione {tenants} onchiudi={() => showProponi = false} />
     {/if}
 
     <!-- Form creazione -->

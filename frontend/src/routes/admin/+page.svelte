@@ -12,6 +12,7 @@
   import FlagRow from '$lib/admin/FlagRow.svelte';
   import FlagForm from '$lib/admin/FlagForm.svelte';
   import ConfigurazioneGuidata from '$lib/admin/guidata/ConfigurazioneGuidata.svelte';
+  import PropostaConfigurazione from '$lib/admin/PropostaConfigurazione.svelte';
   import { etichettaStruttura, etichettaManager,
            leggiEtichettaDaConfig, leggiEtichettaManager } from '$lib/etichette.js';
   import { decToHm, hmToDec, hmToMin, minToHm } from '$lib/admin/durate.js';
@@ -89,6 +90,9 @@
   // Configurazione guidata: il tenant ne ha una sola, quindi si riapre
   // sempre quella, non se ne sceglie una fra tante.
   let wizardAttivo = false;
+
+  // Proposta arrivata dal gestore dell'installazione, se ce n'e' una.
+  let proposta = null;
 
   let nuovoGruppo = { nome: '', sigla: '', flag_id: null };
   let nuovoTurno  = { nome: '', tipiQualitativoIds: [] };
@@ -268,6 +272,9 @@
     config = cfg.config ?? {};
     leggiEtichettaDaConfig(config);
     leggiEtichettaManager(config);
+    try {
+      proposta = (await adminApi.getProposta()).proposta ?? null;
+    } catch { proposta = null; }
     try { conteggiConfig = JSON.parse(config['conteggi_context'] || '[]'); } catch { conteggiConfig = []; }
     // Vincoli solver
     const [rvg, rvs] = await Promise.all([
@@ -2834,6 +2841,8 @@
                              }} />
 
     {:else if !editPreset}
+
+      <PropostaConfigurazione {proposta} ondecisa={caricaTutto} />
 
       <!-- ═══ Sezione Preset Struttura ═══ -->
       <h6 class="text-muted text-uppercase mb-3">Preset struttura turni</h6>
