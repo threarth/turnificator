@@ -38,11 +38,13 @@
     import SezioneTipologie from './SezioneTipologie.svelte';
     import SezioneConteggi from './SezioneConteggi.svelte';
     import SezioneUtenti from './SezioneUtenti.svelte';
+    import SezioneAssenze from './SezioneAssenze.svelte';
 
     export let fasce = [];
     export let tipologie = [];
     export let conteggi = [];
     export let utenti = [];
+    export let tipiRichiesta = [];
     export let sovragruppi = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
     export let vincoliGlobali = [];
@@ -54,6 +56,7 @@
     export let ontipologieaggiornate;
     export let onconteggiaggiornati;
     export let onutentiaggiornati;
+    export let onvocabolarioaggiornato;
 
     // Il turno tipo e' l'unita' di misura del peso, non classifica turni:
     // non va offerto come categoria di una fascia.
@@ -78,6 +81,7 @@
     // producono qualcosa solo alla conferma finale.
     $: sezioni = [
         { id: 'fasce',      nome: 'Fasce orarie',      chiusa: true },
+        { id: 'assenze',    nome: 'Assenze e richieste', chiusa: true },
         { id: 'tipologie',  nome: 'Tipologie turno',   chiusa: true },
         { id: 'strutture',  nome: etichetta.plurale,   chiusa: false },
         { id: 'turni',      nome: 'I turni',           chiusa: false },
@@ -489,6 +493,13 @@
                     notte, per esempio, il riposo del giorno dopo è obbligatorio.
                 </p>
             </section>
+        {/if}
+
+        <!-- ═══ Assenze e richieste ═══ -->
+        {#if sezioneCorrente === 'assenze'}
+            <SezioneAssenze assenze={fasce.filter(f => f.tipo === 'assenza')}
+                            fasce={fasceDisponibili} {tipiRichiesta}
+                            onaggiornate={onvocabolarioaggiornato} />
         {/if}
 
         <!-- ═══ Tipologie turno ═══ -->

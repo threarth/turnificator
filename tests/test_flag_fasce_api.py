@@ -331,3 +331,43 @@ def test_fasce_diverse_nella_stessa_struttura_ammesse(client, admin_token, auth)
         json={'struttura': struttura}, headers=auth(admin_token)
     )
     assert rv.status_code == 200, rv.get_json()
+
+
+# ---------------------------------------------------------------------------
+# I tipi richiesta di serie
+# ---------------------------------------------------------------------------
+
+def test_i_tipi_richiesta_di_serie_ci_sono(client, admin_token, auth):
+    """Un'installazione nuova trova gia' le voci che usano quasi tutti."""
+    rv = client.get('/api/admin/tipi-richiesta', headers=auth(admin_token))
+    assert rv.status_code == 200
+
+    sigle = {t['sigla'] for t in rv.get_json()['tipi']}
+    assert {'M', 'P', 'N', 'CO', 'ROMC'} <= sigle
+
+
+def test_romc_non_conta_le_ore(client, admin_token, auth):
+    """Il recupero del mese corrente e' gia' nelle ore lavorate."""
+    rv = client.get('/api/admin/tipi-richiesta', headers=auth(admin_token))
+    romc = next(t for t in rv.get_json()['tipi'] if t['sigla'] == 'ROMC')
+
+    assert romc['counting_flag'] == 0
+
+
+def test_il_ripristino_non_tocca_quelli_presenti(client, admin_token, auth):
+    """Un tipo rinominato deve restare com'e', non tornare al nome di serie."""
+    rv = client.get('/api/admin/tipi-richiesta', headers=auth(admin_token))
+    ferie = next(t for t in rv.get_json()['tipi'] if t['sigla'] == 'CO')
+
+    client.put(f"/api/admin/tipi-richiesta/{ferie['id']}",
+               json={**ferie, 'descrizione': 'Ferie contrattuali'},
+               headers=auth(admin_token))
+
+    rv = client.post('/api/admin/tipi-richiesta/ripristina-default',
+                     headers=auth(admin_token))
+    assert rv.status_code == 200
+    assert rv.get_json()['inseriti'] == 0
+
+    rv = client.get('/api/admin/tipi-richiesta', headers=auth(admin_token))
+    assert next(t for t in rv.get_json()['tipi']
+                if t['sigla'] == 'CO')['descrizione'] == 'Ferie contrattuali'

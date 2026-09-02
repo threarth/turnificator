@@ -61,6 +61,25 @@ MIGRAZIONE_ROOT_SU_FASCIA = {
     'guardia_24h': 'guardia',
 }
 
+# Tipi richiesta default: cosa un lavoratore puo' chiedere.
+# (sigla, descrizione, tipo, conta_le_ore, ordine)
+#
+# ROMC non conta: il recupero del mese corrente e' gia' contabilizzato dalle
+# ore lavorate, sommarlo di nuovo le raddoppierebbe.
+TIPI_RICHIESTA_DEFAULT = [
+    ('M',     'Mattina',                       'lavorativo', 1,  10),
+    ('P',     'Pomeriggio',                    'lavorativo', 1,  20),
+    ('N',     'Notte',                         'lavorativo', 1,  30),
+    ('L',     'Lunga',                         'lavorativo', 1,  40),
+    ('CO',    'Ferie',                         'assenza',    1,  50),
+    ('CORX',  'Ferie Radiologiche',            'assenza',    1,  60),
+    ('ROMC',  'Recupero Ore Mese Corrente',    'assenza',    0,  70),
+    ('ROMP',  'Recupero Ore Mese Precedente',  'assenza',    1,  80),
+    ('AGG',   'Aggiornamento',                 'assenza',    1,  90),
+    ('PERM',  'Permesso',                      'assenza',    1, 100),
+    ('LEGGE', 'Legge',                         'assenza',    1, 110),
+]
+
 # Flag assenza default: (nome, descrizione).
 FLAG_ASSENZA = [
     ('ferie',    'Ferie'),
@@ -450,6 +469,7 @@ def _migra_colonne(db):
     # inseriscono e leggono le colonne appena aggiunte.
     _rimuovi_concetto_composto(db)
     _inserisci_flag_default(db)
+    inserisci_tipi_richiesta_default(db)
     _nascondi_assenze_dalla_struttura(db)
     _migra_gruppi_su_fasce(db)
     ricalcola_tutte(db)
@@ -465,6 +485,36 @@ def _migra_colonne(db):
                 log.info('Rinominata colonna %s.peso_solver → peso_priorita_solver', tabella)
         except Exception as e:
             log.warning('Rinomina peso_solver in %s fallita: %s', tabella, e)
+
+
+def inserisci_tipi_richiesta_default(db):
+    """
+    Inserisce i tipi richiesta di serie che mancano.
+
+    Non tocca quelli gia' presenti: la sigla e' unica e l'inserimento la
+    rispetta, quindi un tipo rinominato o riconfigurato resta com'e'.
+
+    Args:
+        db: connessione al tenant.
+
+    Returns:
+        int: quanti tipi sono stati inseriti.
+    """
+    try:
+        prima = db.execute("SELECT COUNT(*) FROM tipi_richiesta").fetchone()[0]
+        for sigla, descrizione, tipo, conta, ordine in TIPI_RICHIESTA_DEFAULT:
+            db.execute(
+                "INSERT OR IGNORE INTO tipi_richiesta "
+                "(sigla, descrizione, tipo, counting_flag, ordine) VALUES (?,?,?,?,?)",
+                (sigla, descrizione, tipo, conta, ordine)
+            )
+        db.commit()
+
+        return db.execute("SELECT COUNT(*) FROM tipi_richiesta").fetchone()[0] - prima
+    except Exception as e:
+        db.rollback()
+        log.warning('Inserimento tipi richiesta default fallito: %s', e)
+        return 0
 
 
 def _nascondi_assenze_dalla_struttura(db):

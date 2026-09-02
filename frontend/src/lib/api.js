@@ -134,6 +134,7 @@ export const adminApi = {
   creaTipo:   (dati)       => api.post('/api/admin/tipi-richiesta', dati),
   editTipo:   (id, dati)   => api.put(`/api/admin/tipi-richiesta/${id}`, dati),
   delTipo:    (id)         => api.delete(`/api/admin/tipi-richiesta/${id}`),
+  ripristinaTipiDefault: () => api.post('/api/admin/tipi-richiesta/ripristina-default', {}),
 
   getCalendari:       ()           => api.get('/api/admin/calendari'),
   creaCalendario:     (dati)       => api.post('/api/admin/calendari', dati),

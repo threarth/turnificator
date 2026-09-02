@@ -429,22 +429,8 @@ INSERT OR IGNORE INTO config (chiave, valore, descrizione) VALUES
 -- =============================================================================
 -- DATI DEFAULT — tipi richiesta (globali, senza preset)
 -- =============================================================================
-INSERT OR IGNORE INTO tipi_richiesta
-    (sigla, descrizione, tipo, counting_flag, ore_default, ordine) VALUES
-    ('M',    'Mattina',                    'lavorativo', 1, NULL, 10),
-    ('P',    'Pomeriggio',                 'lavorativo', 1, NULL, 20),
-    ('N',    'Notte',                      'lavorativo', 1, NULL, 30),
-    ('L',    'Lunga',                      'lavorativo', 1, NULL, 40);
-
-INSERT OR IGNORE INTO tipi_richiesta
-    (sigla, descrizione, tipo, counting_flag, ore_default, ordine) VALUES
-    ('CO',    'Ferie',                              'assenza', 1, NULL, 50),
-    ('CORX',  'Ferie Radiologiche',                 'assenza', 1, NULL, 60),
-    ('ROMC',  'Recupero Ore Mese Corrente',          'assenza', 0, NULL, 70),
-    ('ROMP',  'Recupero Ore Mese Precedente',        'assenza', 1, NULL, 80),
-    ('AGG',   'Aggiornamento',                       'assenza', 1, NULL, 90),
-    ('PERM',  'Permesso',                            'assenza', 1, NULL, 100),
-    ('LEGGE', 'Legge',                               'assenza', 1, NULL, 110);
+-- I tipi richiesta di serie li inserisce la migrazione all'avvio, da
+-- TIPI_RICHIESTA_DEFAULT in app/__init__.py: una sorgente sola.
 
 -- =============================================================================
 -- TABELLA: sovragruppi

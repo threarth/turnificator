@@ -2822,6 +2822,7 @@
                              presetEsistente={presets[0] ?? null}
                              conteggi={conteggiConfig}
                              {utenti} sovragruppi={sovragruppiDisponibili}
+                             tipiRichiesta={tipiRichiesta}
                              etichetta={$etichettaStruttura}
                              {vincoliGlobali} {vincoliSolver}
                              oncompletata={wizardCompletato}
@@ -2838,6 +2839,10 @@
                              }}
                              onutentiaggiornati={async () => {
                                utenti = (await adminApi.getUtenti()).utenti ?? [];
+                             }}
+                             onvocabolarioaggiornato={async () => {
+                               flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
+                               tipiRichiesta = (await adminApi.getTipi()).tipi ?? [];
                              }} />
 
     {:else if !editPreset}

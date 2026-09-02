@@ -474,6 +474,21 @@ def ripristina_flag_default():
     return jsonify({'ok': True, 'messaggio': 'Flag default ripristinati.'}), 200
 
 
+@bp.route('/tipi-richiesta/ripristina-default', methods=['POST'])
+@require_role('admin')
+def ripristina_tipi_richiesta_default():
+    """
+    Reinserisce i tipi richiesta di serie che mancano.
+
+    Non tocca quelli presenti: un tipo rinominato o riconfigurato resta com'e'.
+    """
+    from app import inserisci_tipi_richiesta_default
+
+    inseriti = inserisci_tipi_richiesta_default(get_db())
+
+    return jsonify({'ok': True, 'inseriti': inseriti}), 200
+
+
 # =============================================================================
 # PROPOSTE DI CONFIGURAZIONE (dal master)
 # =============================================================================
