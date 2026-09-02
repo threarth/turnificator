@@ -25,7 +25,7 @@ from app.services.config_snapshot import (
     carica_config_snapshot,
     snap_vincoli_globali, snap_vincoli_utente,
     snap_vincoli_solver, snap_vincoli_solver_utente,
-    snap_esclusioni_utente, snap_giorni_esclusi, snap_flag_map,
+    snap_giorni_esclusi, snap_flag_map,
 )
 from app.services.solver_common import (
     espandi_esclusioni_manuali, espandi_celle_bloccate,
@@ -37,12 +37,11 @@ from app.services.solver_common import (
 from app.services.solver import (
     _carica_vincoli_globali, _carica_vincoli_utente,
     _carica_vincoli_solver, _carica_vincoli_solver_utente_bulk,
-    _carica_esclusioni_utente, _carica_giorni_esclusi,
+    _carica_giorni_esclusi,
     _espandi_giorni_esclusi, _carica_working_desiderata_bulk,
     _get_vincolo, _get_vincolo_solver,
     _get_vincoli_solver_utente_extra,
     _calcola_antenati_flag, _calcola_giorni_consecutivi,
-    _utente_escluso_per_flag,
     _inizializza_stati,
 )
 
@@ -53,7 +52,7 @@ from app.services.solver import (
 
 def _verifica_vincoli_hard(uid, turno_id, giorno, stati, vincoli_g,
                            vincoli_utente_cache, vincoli_solver_list,
-                           vs_utente_cache, esclusioni_cache, flag_map,
+                           vs_utente_cache, flag_map,
                            indisponibilita, turni_info_map, giorno_tipo,
                            turni_dovuti, calendario_id, escludi_regole):
     """
@@ -148,10 +147,6 @@ def _verifica_vincoli_hard(uid, turno_id, giorno, stati, vincoli_g,
         if ref_id in tq_ids:
             if vs_extra['max_n'] is not None and s['conteggio_qualitativo'].get(ref_id, 0) >= vs_extra['max_n']:
                 return False
-
-    # Esclusioni per flag turno
-    if flag_id and _utente_escluso_per_flag(esclusioni_cache, uid, flag_id):
-        return False
 
     # Regole conflitto bloccanti
     try:
@@ -365,7 +360,6 @@ def esegui_ottimizzazione(calendario_id, user_id_chiamante,
         vincoli_utente_cache = snap_vincoli_utente(config_snap)
         vincoli_solver_list = snap_vincoli_solver(config_snap)
         vs_utente_cache = snap_vincoli_solver_utente(config_snap)
-        esclusioni_cache = snap_esclusioni_utente(config_snap)
         giorni_esclusi_cache = snap_giorni_esclusi(config_snap)
     else:
         vincoli_g = _carica_vincoli_globali()
@@ -379,7 +373,6 @@ def esegui_ottimizzazione(calendario_id, user_id_chiamante,
                 vincoli_utente_cache[u_temp['id']] = vu
         vincoli_solver_list = _carica_vincoli_solver()
         vs_utente_cache = _carica_vincoli_solver_utente_bulk()
-        esclusioni_cache = _carica_esclusioni_utente()
         giorni_esclusi_cache = _carica_giorni_esclusi()
 
     stati, utenti = _inizializza_stati(calendario_id, giorni_info, turni_info, flag_map,
@@ -540,14 +533,14 @@ def esegui_ottimizzazione(calendario_id, user_id_chiamante,
         ok_a = _verifica_vincoli_hard(
             uid_a, c2['turno_id'], c2['giorno'], stati,
             vincoli_g, vincoli_utente_cache, vincoli_solver_list,
-            vs_utente_cache, esclusioni_cache, flag_map,
+            vs_utente_cache, flag_map,
             indisponibilita, turni_info_map, giorno_tipo,
             turni_dovuti, calendario_id, escludi_regole
         )
         ok_b = _verifica_vincoli_hard(
             uid_b, c1['turno_id'], c1['giorno'], stati,
             vincoli_g, vincoli_utente_cache, vincoli_solver_list,
-            vs_utente_cache, esclusioni_cache, flag_map,
+            vs_utente_cache, flag_map,
             indisponibilita, turni_info_map, giorno_tipo,
             turni_dovuti, calendario_id, escludi_regole
         )

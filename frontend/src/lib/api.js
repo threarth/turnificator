@@ -171,9 +171,6 @@ export const adminApi = {
   delVincoloUtente:  (uid, chiave)  => api.delete(`/api/admin/vincoli-utente/${uid}/${chiave}`),
 
   // Esclusioni utente (flag-based)
-  getEsclusioniUtente:  (uid)            => api.get(`/api/admin/esclusioni-utente/${uid}`),
-  setEsclusioniUtente:  (uid, esclusioni) => api.put(`/api/admin/esclusioni-utente/${uid}`, { esclusioni }),
-  delEsclusioneUtente:  (uid, eid)       => api.delete(`/api/admin/esclusioni-utente/${uid}/${eid}`),
 
   // Giorni esclusi (giorno della settimana per utente)
   getGiorniEsclusi:     (uid)            => api.get(`/api/admin/giorni-esclusi/${uid}`),

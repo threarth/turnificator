@@ -28,7 +28,7 @@ from app.services.config_snapshot import (
     carica_config_snapshot,
     snap_vincoli_globali, snap_vincoli_utente,
     snap_vincoli_solver, snap_vincoli_solver_utente,
-    snap_esclusioni_utente, snap_esclusioni_turno, snap_giorni_esclusi,
+    snap_esclusioni_turno, snap_giorni_esclusi,
     snap_flag_map,
 )
 from app.services.solver_common import (
@@ -243,15 +243,6 @@ def _calcola_giorni_consecutivi(stato, giorno):
 # Esclusioni utente (flag-based)
 # ---------------------------------------------------------------------------
 
-def _carica_esclusioni_utente():
-    """Carica tutte le esclusioni utente come dict user_id → set di flag_id."""
-    rows = query_all("SELECT user_id, flag_id FROM esclusioni_utente")
-    esclusioni = {}
-    for r in rows:
-        esclusioni.setdefault(r['user_id'], set()).add(r['flag_id'])
-    return esclusioni
-
-
 def _carica_esclusioni_turno(preset_id):
     """
     Esclusioni per turno di un preset, lette dal vivo.
@@ -281,35 +272,6 @@ def _carica_esclusioni_turno(preset_id):
 
     return per_utente
 
-
-def _utente_escluso_per_flag(esclusioni_cache, user_id, flag_id, mappa_flag):
-    """
-    L'utente e' escluso dal flag del turno?
-
-    L'esclusione vale per discendenza: escludere un utente dal concetto
-    `notturno` lo esclude da ogni fascia che ne discende.
-
-    Args:
-        esclusioni_cache (dict): {user_id → set(flag_id esclusi)}.
-        user_id (int): lavoratore da verificare.
-        flag_id (int): flag del turno candidato.
-        mappa_flag (dict): gerarchia in vigore per il calendario.
-
-    Returns:
-        bool: True se il turno gli e' precluso.
-    """
-    if user_id not in esclusioni_cache:
-        return False
-
-    return any(
-        _flag_matcha(flag_id, fe, mappa_flag)
-        for fe in esclusioni_cache[user_id]
-    )
-
-
-# ---------------------------------------------------------------------------
-# Giorni esclusi (giorno della settimana fisso per utente)
-# ---------------------------------------------------------------------------
 
 def _carica_giorni_esclusi():
     """Carica tutti i giorni esclusi come dict user_id → list di day-of-week."""
@@ -565,7 +527,6 @@ def _costruisci_contesto(calendario_id, solo_vuote=True, solo_indispensabili=Fal
         vincoli_utente_cache = snap_vincoli_utente(config_snap)
         vincoli_solver_list = snap_vincoli_solver(config_snap)
         vs_utente_cache = snap_vincoli_solver_utente(config_snap)
-        esclusioni_cache = snap_esclusioni_utente(config_snap)
         esclusioni_turno_cache = snap_esclusioni_turno(config_snap)
         giorni_esclusi_cache = snap_giorni_esclusi(config_snap)
     else:
@@ -580,7 +541,6 @@ def _costruisci_contesto(calendario_id, solo_vuote=True, solo_indispensabili=Fal
                 vincoli_utente_cache[u_temp['id']] = vu
         vincoli_solver_list = _carica_vincoli_solver()
         vs_utente_cache = _carica_vincoli_solver_utente_bulk()
-        esclusioni_cache = _carica_esclusioni_utente()
         esclusioni_turno_cache = _carica_esclusioni_turno(cal.get('preset_id'))
         giorni_esclusi_cache = _carica_giorni_esclusi()
 
@@ -662,7 +622,6 @@ def _costruisci_contesto(calendario_id, solo_vuote=True, solo_indispensabili=Fal
         'vincoli_utente_cache': vincoli_utente_cache,
         'vincoli_solver_list': vincoli_solver_list,
         'vs_utente_cache': vs_utente_cache,
-        'esclusioni_cache': esclusioni_cache,
         'esclusioni_turno_cache': esclusioni_turno_cache,
         'flag_map': flag_map,
         'wd_map': wd_map,
@@ -776,7 +735,6 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
     vincoli_utente_cache = ctx['vincoli_utente_cache']
     vincoli_solver_list = ctx['vincoli_solver_list']
     vs_utente_cache = ctx['vs_utente_cache']
-    esclusioni_cache = ctx['esclusioni_cache']
     esclusioni_turno_cache = ctx['esclusioni_turno_cache']
     flag_map = ctx['flag_map']
     wd_map = ctx['wd_map']
@@ -911,9 +869,6 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
                 continue
 
             # HARD: esclusioni per flag turno
-            if flag_id and _utente_escluso_per_flag(esclusioni_cache, uid, flag_id, flag_map):
-                continue
-
             # HARD: esclusioni turno per preset (turno/gruppo/sovragruppo specifico)
             if esclusioni_turno_cache and uid in esclusioni_turno_cache:
                 esclusi_u = esclusioni_turno_cache[uid]

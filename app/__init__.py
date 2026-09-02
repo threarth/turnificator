@@ -471,6 +471,7 @@ def _migra_colonne(db):
     _inserisci_flag_default(db)
     inserisci_tipi_richiesta_default(db)
     _nascondi_assenze_dalla_struttura(db)
+    _converti_esclusioni_in_limiti(db)
     _migra_gruppi_su_fasce(db)
     ricalcola_tutte(db)
     _crea_indice_fascia_unica(db)
@@ -515,6 +516,46 @@ def inserisci_tipi_richiesta_default(db):
         db.rollback()
         log.warning('Inserimento tipi richiesta default fallito: %s', e)
         return 0
+
+
+def _converti_esclusioni_in_limiti(db):
+    """
+    Converte le vecchie esclusioni per fascia in limiti a zero, e le elimina.
+
+    Feature removal. `esclusioni_utente` e i limiti per utente dicevano la
+    stessa cosa con due meccanismi: un limite a zero significa gia' "mai", e
+    nessuno dei due filtrava la tendina dell'assegnazione manuale. Restava
+    una tabella che il solver leggeva e che nessuna schermata globale
+    scriveva.
+
+    Le esclusioni esistenti diventano limiti a zero prima che la tabella
+    sparisca: nessun divieto configurato si perde per strada.
+
+    Idempotente: al secondo avvio la tabella non c'e' piu'.
+    """
+    try:
+        tabelle = [r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='esclusioni_utente'"
+        ).fetchall()]
+        if not tabelle:
+            return
+
+        convertite = db.execute(
+            "INSERT OR IGNORE INTO vincoli_solver_utente "
+            "(user_id, tipo, ref_id, max_n, note) "
+            "SELECT user_id, 'flag', flag_id, 0, "
+            "       COALESCE(note, 'Convertita da esclusione per fascia') "
+            "FROM esclusioni_utente WHERE flag_id IS NOT NULL"
+        ).rowcount
+
+        db.execute('DROP TABLE esclusioni_utente')
+        db.commit()
+
+        if convertite:
+            log.info('Convertite %d esclusioni per fascia in limiti a zero', convertite)
+    except Exception as e:
+        db.rollback()
+        log.warning('Conversione delle esclusioni per fascia fallita: %s', e)
 
 
 def _nascondi_assenze_dalla_struttura(db):

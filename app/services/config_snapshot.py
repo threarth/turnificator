@@ -7,7 +7,6 @@ Contenuto del JSON config_snapshot:
 - vincoli_utente: [{user_id, chiave, valore, note}]
 - vincoli_solver: [{tipo, ref_id, max_n, is_active}]
 - vincoli_solver_utente: [{user_id, tipo, ref_id, max_n, note}]
-- esclusioni_utente: [{user_id, flag_id, note}]
 - giorni_esclusi: [{user_id, giorni}]  (giorni = array di day-of-week 0=Lun..6=Dom)
 - accesso_turni: [{manager_id, preset_turno_id}]
 - accesso_utenti: [{manager_id, user_id}]
@@ -87,11 +86,6 @@ def crea_config_snapshot(preset_id=None):
         'vincoli_solver_utente': [
             dict(r) for r in query_all(
                 "SELECT user_id, tipo, ref_id, max_n, note FROM vincoli_solver_utente"
-            )
-        ],
-        'esclusioni_utente': [
-            dict(r) for r in query_all(
-                "SELECT user_id, flag_id, note FROM esclusioni_utente"
             )
         ],
         'giorni_esclusi': [
@@ -263,19 +257,6 @@ def snap_vincoli_solver_utente(snap):
     cache = {}
     for r in snap.get('vincoli_solver_utente', []):
         cache[(r['user_id'], r['tipo'], r['ref_id'])] = r['max_n']
-    return cache
-
-
-def snap_esclusioni_utente(snap):
-    """Ritorna dict user_id→set(flag_id)."""
-    if not snap:
-        return {}
-    cache = {}
-    for r in snap.get('esclusioni_utente', []):
-        uid = r['user_id']
-        if uid not in cache:
-            cache[uid] = set()
-        cache[uid].add(r['flag_id'])
     return cache
 
 

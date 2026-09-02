@@ -120,7 +120,6 @@
   let solverEditUid     = $state(null);          // utente espanso per editing
   let solverEditVincoli = $state([]);            // vincoli override in editing
   let solverEditVSolver = $state([]);            // vincoli solver in editing
-  let solverEditEscl    = $state([]);            // esclusioni in editing
   let solverFlagTurno   = $state([]);            // flag per dropdown
   // Gerarchia dei flag: serve a riconoscere le fasce dalla discendenza e
   // non dal nome, che l'utente puo' cambiare.
@@ -430,7 +429,6 @@
       solverUtenti[idx] = {
         ...solverUtenti[idx],
         vincoli: solverEditVincoli.filter(v => v.chiave && v.valore),
-        esclusioni: solverEditEscl.filter(e => e.flag_id),
         vincoli_solver: solverEditVSolver.filter(v => v.ref_id).map(v => ({
           ...v, ref_nome: v.ref_nome || _solverRefNome(v.tipo, v.ref_id)
         })),
@@ -789,8 +787,7 @@
   function _snapUtentiForUser(uid) {
     const vu = (configSnapshot.vincoli_utente ?? []).filter(v => v.user_id === uid);
     const vsu = (configSnapshot.vincoli_solver_utente ?? []).filter(v => v.user_id === uid);
-    const eu = (configSnapshot.esclusioni_utente ?? []).filter(e => e.user_id === uid);
-    return { vincoli: vu, vincoli_solver: vsu, esclusioni: eu };
+    return { vincoli: vu, vincoli_solver: vsu };
   }
 
   function solverEspandiUtente(uid) {
@@ -799,7 +796,6 @@
     const dati = _snapUtentiForUser(uid);
     solverEditVincoli = [...dati.vincoli];
     solverEditVSolver = [...dati.vincoli_solver];
-    solverEditEscl = [...dati.esclusioni];
   }
 
   function _solverSalvaUtentiSnapshot() {
@@ -815,10 +811,6 @@
       ...(snap.vincoli_solver_utente ?? []).filter(v => v.user_id !== uid),
       ...solverEditVSolver.filter(v => v.ref_id).map(v => ({ ...v, user_id: uid })),
     ];
-    snap.esclusioni_utente = [
-      ...(snap.esclusioni_utente ?? []).filter(e => e.user_id !== uid),
-      ...solverEditEscl.filter(e => e.flag_id).map(e => ({ ...e, user_id: uid })),
-    ];
     configSnapshot = snap;
     // Aggiorna riepilogo
     _solverAggiornaRiepilogo();
@@ -827,7 +819,6 @@
 
   function solverSalvaVincoli() { _solverSalvaUtentiSnapshot(); }
   function solverSalvaVSolver() { _solverSalvaUtentiSnapshot(); }
-  function solverSalvaEscl() { _solverSalvaUtentiSnapshot(); }
 
   // ── Optimizer ──────────────────────────────────────────────
   let optOpen      = $state(false);
@@ -4348,7 +4339,7 @@
         <div style="max-height:400px;overflow-y:auto">
           <table class="table table-sm table-hover mb-0" style="font-size:.78rem">
             <thead class="table-light"><tr>
-              <th>Utente</th><th>Vincoli override</th><th>Limiti per fascia o tipo</th><th>Esclusioni per fascia</th>
+              <th>Utente</th><th>Vincoli override</th><th>Limiti per fascia o tipo</th>
             </tr></thead>
             <tbody>
               {#each solverUtenti as u}
@@ -4368,11 +4359,6 @@
                         <span class="badge me-1 mb-1" class:bg-warning={vs.tipo==='flag'} class:bg-primary={vs.tipo==='qualitativo'}
                               class:text-dark={vs.tipo==='flag'} title={vs.note||''}>{vs.ref_nome}&le;{vs.max_n}</span>
                       {/each}
-                    {:else}<span class="text-muted fst-italic">—</span>{/if}
-                  </td>
-                  <td>
-                    {#if u.esclusioni?.length}
-                      {#each u.esclusioni as e}<span class="badge bg-danger me-1 mb-1" title={e.note||''}>{e.flag_nome}</span>{/each}
                     {:else}<span class="text-muted fst-italic">—</span>{/if}
                   </td>
                 </tr>
@@ -4454,37 +4440,6 @@
                       </table>
                     {:else}<div class="text-muted small mb-2">Nessun limite.</div>{/if}
 
-                    <!-- Esclusioni flag -->
-                    <div class="d-flex align-items-center gap-2 mb-1">
-                      <strong style="font-size:.75rem">Esclusioni per fascia oraria</strong>
-                      <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem"
-                              onclick={() => { solverEditEscl = [...solverEditEscl, {flag_id:null,flag_nome:'',note:''}]; }}>
-                        <i class="bi bi-plus"></i>
-                      </button>
-                    </div>
-                    {#if solverEditEscl.length}
-                      <table class="table table-sm mb-0" style="font-size:.78rem">
-                        <thead><tr><th>Fascia esclusa</th><th>Note</th><th></th></tr></thead>
-                        <tbody>
-                        {#each solverEditEscl as eu, i}
-                          <tr>
-                            <td>
-                              <select class="form-select form-select-sm" style="font-size:.78rem" bind:value={eu.flag_id} onchange={solverSalvaEscl}>
-                                <option value={null}>— scegli una fascia —</option>
-                                {#each solverFlagTurno.filter(f => f.mostra_in_struttura) as f}
-                                  <option value={f.id}>{f.nome}{f.parent_nome ? ` (${f.parent_nome})` : ''}</option>
-                                {/each}
-                              </select>
-                            </td>
-                            <td><input class="form-control form-control-sm" bind:value={eu.note} onchange={solverSalvaEscl} placeholder="Note" /></td>
-                            <td><button class="btn btn-sm btn-outline-danger py-0"
-                                        onclick={() => { solverEditEscl = solverEditEscl.filter((_,j) => j!==i); solverSalvaEscl(); }}>
-                              <i class="bi bi-x-lg"></i></button></td>
-                          </tr>
-                        {/each}
-                        </tbody>
-                      </table>
-                    {:else}<div class="text-muted small">Nessuna esclusione.</div>{/if}
                   </td></tr>
                 {/if}
               {/each}

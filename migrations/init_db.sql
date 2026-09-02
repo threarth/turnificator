@@ -641,20 +641,6 @@ CREATE TABLE IF NOT EXISTS vincoli_solver_utente (
 );
 
 -- =============================================================================
--- TABELLA: esclusioni_utente
--- Esclusioni per-utente basate su flag turno.
--- Se un utente ha un'esclusione per un flag, il solver lo salta per
--- tutti i turni con quel flag (o figli nella gerarchia).
--- =============================================================================
-CREATE TABLE IF NOT EXISTS esclusioni_utente (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    flag_id INTEGER NOT NULL REFERENCES flag_turno(id) ON DELETE CASCADE,
-    note    TEXT,
-    UNIQUE(user_id, flag_id)
-);
-
--- =============================================================================
 -- TABELLA: manager_accesso_utenti
 -- Restrizioni accesso manager→utenti. Se un manager ha righe in questa tabella,
 -- può gestire SOLO gli utenti elencati. Nessuna riga = accesso completo.

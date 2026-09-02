@@ -893,7 +893,7 @@ def crea_template_da_tenant(tenant_id):
             'preset_turni_qualitativo', 'posti_fissi', 'posti_fissi_utenti',
             'preset_esclusioni_turno_per_utente',
             'manager_accesso_utenti', 'manager_accesso_turni',
-            'vincoli_utente', 'vincoli_solver_utente', 'esclusioni_utente',
+            'vincoli_utente', 'vincoli_solver_utente',
         ]
         for tabella in tabelle_da_svuotare:
             try:

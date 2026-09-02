@@ -1028,7 +1028,7 @@ def duplica_preset(pid):
     Duplica: struttura_presets → sovragruppi → gruppi → preset_turni
              → preset_turni_qualitativo + posti_fissi (+posti_fissi_utenti)
              + preset_esclusioni_turno_per_utente + manager_accesso_turni
-    Non copia: vincoli_solver, esclusioni_utente (globali, non per-preset).
+    Non copia: vincoli_solver (globali, non per-preset).
     """
     preset = query_one("SELECT * FROM struttura_presets WHERE id=?", (pid,))
     if not preset:
@@ -2957,46 +2957,6 @@ def del_vincolo_utente(uid, chiave):
 
 # =============================================================================
 # ESCLUSIONI UTENTE (flag-based)
-# =============================================================================
-
-@bp.route('/esclusioni-utente/<int:uid>', methods=['GET'])
-@require_role('admin', 'manager')
-def get_esclusioni_utente(uid):
-    rows = query_all(
-        "SELECT eu.id, eu.flag_id, ft.nome AS flag_nome, eu.note "
-        "FROM esclusioni_utente eu "
-        "JOIN flag_turno ft ON eu.flag_id = ft.id "
-        "WHERE eu.user_id=? ORDER BY ft.nome",
-        (uid,)
-    )
-    return jsonify({'ok': True, 'esclusioni': [dict(r) for r in rows]}), 200
-
-
-@bp.route('/esclusioni-utente/<int:uid>', methods=['PUT'])
-@require_role('admin', 'manager')
-def set_esclusioni_utente(uid):
-    dati = request.get_json(silent=True) or {}
-    esclusioni = dati.get('esclusioni', [])
-    execute_write("DELETE FROM esclusioni_utente WHERE user_id=?", (uid,))
-    for e in esclusioni:
-        flag_id = e.get('flag_id')
-        if flag_id:
-            execute_write(
-                "INSERT OR IGNORE INTO esclusioni_utente (user_id, flag_id, note) VALUES (?,?,?)",
-                (uid, flag_id, e.get('note', ''))
-            )
-    return jsonify({'ok': True, 'messaggio': 'Esclusioni utente aggiornate.'}), 200
-
-
-@bp.route('/esclusioni-utente/<int:uid>/<int:eid>', methods=['DELETE'])
-@require_role('admin', 'manager')
-def del_esclusione_utente(uid, eid):
-    execute_write("DELETE FROM esclusioni_utente WHERE id=? AND user_id=?", (eid, uid))
-    return jsonify({'ok': True, 'messaggio': 'Esclusione rimossa.'}), 200
-
-
-# =============================================================================
-# GIORNI ESCLUSI (giorno della settimana per utente)
 # =============================================================================
 
 @bp.route('/giorni-esclusi/<int:uid>', methods=['GET'])

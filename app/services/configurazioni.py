@@ -64,7 +64,6 @@ def verifica_invarianti(snapshot):
 TABELLE_DA_RISCRIVERE = {
     'vincoli_solver':        ('vincoli_solver',        ('tipo', 'ref_id', 'max_n', 'is_active')),
     'vincoli_solver_utente': ('vincoli_solver_utente', ('user_id', 'tipo', 'ref_id', 'max_n', 'note')),
-    'esclusioni_utente':     ('esclusioni_utente',     ('user_id', 'flag_id', 'note')),
 }
 
 # Le tabelle che invece si aggiornano per id, perche' qualcun altro vi punta.

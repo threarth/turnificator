@@ -16,7 +16,7 @@ from app.services.config_snapshot import (
     carica_config_snapshot,
     snap_vincoli_globali, snap_vincoli_utente,
     snap_vincoli_solver, snap_vincoli_solver_utente,
-    snap_esclusioni_utente, snap_flag_map,
+    snap_flag_map,
 )
 
 
