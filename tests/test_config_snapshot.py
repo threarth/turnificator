@@ -69,27 +69,9 @@ def test_tipi_richiesta_congelati_con_i_loro_parametri(client, admin_token, auth
 
 def test_lettori_senza_snapshot_restituiscono_vuoto(app):
     """Un calendario senza snapshot non deve far esplodere niente."""
-    from app.services.config_snapshot import (
-        snap_conteggi_context, snap_regole_conflitto,
-        snap_tipi_qualitativo, snap_tipi_richiesta,
-    )
+    from app.services.config_snapshot import snap_tipi_richiesta
 
-    assert snap_regole_conflitto(None) == []
     assert snap_tipi_richiesta(None) == {}
-    assert snap_tipi_qualitativo(None) == {}
-    assert snap_conteggi_context(None) == []
-
-
-def test_le_regole_disattivate_restano_fuori(app):
-    """Chi legge le regole vuole quelle in vigore, non l'archivio."""
-    from app.services.config_snapshot import snap_regole_conflitto
-
-    snap = {'regole_conflitto': [
-        {'id': 1, 'nome': 'attiva', 'is_active': 1},
-        {'id': 2, 'nome': 'spenta', 'is_active': 0},
-    ]}
-
-    assert [r['nome'] for r in snap_regole_conflitto(snap)] == ['attiva']
 
 
 def test_tipi_richiesta_indicizzati_per_id(app):

@@ -14,11 +14,19 @@ Contenuto del JSON config_snapshot:
                  ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura,
                  orario_inizio, orario_fine, pausa_minuti,
                  durata_netta_minuti, durata_totale_minuti, tipo}]
-- tipi_qualitativo: [{id, nome, descrizione, carico_lavoro}]
+- tipi_qualitativo: [{id, nome, descrizione, carico_lavoro}]  (*)
 - tipi_richiesta: [{id, sigla, descrizione, tipo, counting_flag, flag_id,
                     ore_default, ordine}]
-- regole_conflitto: le regole attive, nella forma di validatori.snapshot_regole()
-- conteggi_context: [{id, label, flag_nome, giorno_settimana, negato, attivo}]
+- regole_conflitto: le regole attive, nella forma di validatori.snapshot_regole()  (*)
+- conteggi_context: [{id, label, flag_nome, giorno_settimana, negato, attivo}]  (*)
+
+(*) Queste tre parti non hanno un lettore `snap_*`: il calendario non le
+rilegge da qui. Le regole le prende da `calendari.regole_snapshot`, che ha un
+suo percorso di modifica; le tipologie di un turno stanno gia' congelate in
+`calendario_turni.tipi_qualitativi`; i conteggi sono una domanda che si fa
+sui dati, non un dato congelato, e si leggono sempre correnti.
+Restano nello snapshot perche' il confronto delle proposte (services/proposte)
+li usa per sapere com'e' fatta la configurazione viva.
 
 Nota: esclusioni_manuali e celle_bloccate sono per-calendario (campi JSON in
 tabella calendari), non nella config globale → non servono nello snapshot.
@@ -305,21 +313,6 @@ def snap_esclusioni_turno(snap):
     return cache
 
 
-def snap_tipi_qualitativo(snap):
-    """
-    I tipi qualitativi congelati, come dict id→riga.
-
-    Args:
-        snap (dict|None): snapshot del calendario.
-
-    Returns:
-        dict: {id → {nome, descrizione, carico_lavoro}}, vuoto senza snapshot.
-    """
-    if not snap:
-        return {}
-    return {r['id']: r for r in snap.get('tipi_qualitativo', [])}
-
-
 def snap_tipi_richiesta(snap):
     """
     I tipi richiesta congelati, come dict id→riga.
@@ -337,36 +330,6 @@ def snap_tipi_richiesta(snap):
     if not snap:
         return {}
     return {r['id']: r for r in snap.get('tipi_richiesta', [])}
-
-
-def snap_conteggi_context(snap):
-    """
-    I conteggi del context menu congelati.
-
-    Args:
-        snap (dict|None): snapshot del calendario.
-
-    Returns:
-        list: elenco dei conteggi, vuoto senza snapshot.
-    """
-    if not snap:
-        return []
-    return snap.get('conteggi_context', [])
-
-
-def snap_regole_conflitto(snap):
-    """
-    Le regole di conflitto congelate, gia' filtrate sulle attive.
-
-    Args:
-        snap (dict|None): snapshot del calendario.
-
-    Returns:
-        list: regole attive, vuoto senza snapshot.
-    """
-    if not snap:
-        return []
-    return [r for r in snap.get('regole_conflitto', []) if r.get('is_active', 1)]
 
 
 def snap_flag_map(snap):
