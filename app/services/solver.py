@@ -252,6 +252,36 @@ def _carica_esclusioni_utente():
     return esclusioni
 
 
+def _carica_esclusioni_turno(preset_id):
+    """
+    Esclusioni per turno di un preset, lette dal vivo.
+
+    Serve ai calendari nati prima dello snapshot completo: senza questo, i
+    divieti su singoli turni sparivano in silenzio, che e' peggio di non
+    averli — l'amministratore li vede configurati e il solver li ignora.
+
+    Args:
+        preset_id (int|None): struttura turni del calendario.
+
+    Returns:
+        dict: {user_id → [{tipo, target_id, eccezioni}]}, vuoto senza preset.
+    """
+    if not preset_id:
+        return {}
+
+    righe = query_all(
+        "SELECT user_id, tipo, target_id, eccezioni "
+        "FROM preset_esclusioni_turno_per_utente WHERE preset_id = ?",
+        (preset_id,)
+    )
+
+    per_utente = {}
+    for r in righe:
+        per_utente.setdefault(r['user_id'], []).append(dict(r))
+
+    return per_utente
+
+
 def _utente_escluso_per_flag(esclusioni_cache, user_id, flag_id, mappa_flag):
     """
     L'utente e' escluso dal flag del turno?
@@ -379,7 +409,7 @@ def _costruisci_contesto(calendario_id, solo_vuote=True, solo_indispensabili=Fal
         dict con tutte le strutture dati necessarie, oppure dict con 'errore'.
     """
     cal = query_one(
-        "SELECT mese, anno, esclusioni_manuali, celle_bloccate, "
+        "SELECT mese, anno, preset_id, esclusioni_manuali, celle_bloccate, "
         "desiderata_congelati, regole_snapshot FROM calendari WHERE id=?",
         (calendario_id,)
     )
@@ -551,7 +581,7 @@ def _costruisci_contesto(calendario_id, solo_vuote=True, solo_indispensabili=Fal
         vincoli_solver_list = _carica_vincoli_solver()
         vs_utente_cache = _carica_vincoli_solver_utente_bulk()
         esclusioni_cache = _carica_esclusioni_utente()
-        esclusioni_turno_cache = {}  # senza snapshot non è disponibile
+        esclusioni_turno_cache = _carica_esclusioni_turno(cal.get('preset_id'))
         giorni_esclusi_cache = _carica_giorni_esclusi()
 
     escludi_per_stato = turni_ids_processati if not solo_vuote else None
