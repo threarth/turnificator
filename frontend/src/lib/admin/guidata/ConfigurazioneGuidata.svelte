@@ -35,16 +35,19 @@
     import VincoliSolver from '../VincoliSolver.svelte';
     import { minToHm } from '../durate.js';
     import { costruisciStruttura, nomeDuplicato } from '../struttura.js';
+    import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
     import SezioneTipologie from './SezioneTipologie.svelte';
     import SezioneConteggi from './SezioneConteggi.svelte';
     import SezioneUtenti from './SezioneUtenti.svelte';
     import SezioneAssenze from './SezioneAssenze.svelte';
+    import SezioneRegole from './SezioneRegole.svelte';
 
     export let fasce = [];
     export let tipologie = [];
     export let conteggi = [];
     export let utenti = [];
     export let tipiRichiesta = [];
+    export let regole = [];
     export let sovragruppi = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
     export let vincoliGlobali = [];
@@ -57,10 +60,7 @@
     export let onconteggiaggiornati;
     export let onutentiaggiornati;
     export let onvocabolarioaggiornato;
-
-    // Il turno tipo e' l'unita' di misura del peso, non classifica turni:
-    // non va offerto come categoria di una fascia.
-    const NOME_TURNO_TIPO = 'turno_tipo';
+    export let onregoleaggiornate;
 
     // Pausa obbligatoria di default, in minuti.
     const PAUSA_DEFAULT_MINUTI = 10;
@@ -87,6 +87,7 @@
         { id: 'turni',      nome: 'I turni',           chiusa: false },
         { id: 'utenti',     nome: 'Le persone',        chiusa: true },
         { id: 'conteggi',   nome: 'Conteggi',          chiusa: true },
+        { id: 'regole',     nome: 'Regole',            chiusa: true },
         { id: 'vincoli',    nome: 'Vincoli',           chiusa: true },
     ];
 
@@ -137,6 +138,12 @@
     );
 
     // Le fasce agganciabili a un turno, in ordine di orario.
+    // Una regola confronta due turni in griglia: concetti e fasce, mai le
+    // assenze, che in griglia non compaiono.
+    $: fasceRegola = fasce.filter(
+        f => (f.tipo || 'lavorativo') !== 'assenza' && f.nome !== NOME_TURNO_TIPO
+    );
+
     $: fasceDisponibili = fasce
         .filter(f => f.mostra_in_struttura)
         .sort((a, b) => (a.orario_inizio || '').localeCompare(b.orario_inizio || ''));
@@ -722,6 +729,12 @@
         {#if sezioneCorrente === 'conteggi'}
             <SezioneConteggi {conteggi} fasce={fasceDisponibili} {tipologie}
                              onaggiornati={onconteggiaggiornati} />
+        {/if}
+
+        <!-- ═══ Regole ═══ -->
+        {#if sezioneCorrente === 'regole'}
+            <SezioneRegole {regole} fasce={fasceRegola}
+                           onaggiornate={onregoleaggiornate} />
         {/if}
 
         <!-- ═══ Vincoli ═══ -->

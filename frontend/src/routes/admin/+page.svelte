@@ -2823,6 +2823,7 @@
                              conteggi={conteggiConfig}
                              {utenti} sovragruppi={sovragruppiDisponibili}
                              tipiRichiesta={tipiRichiesta}
+                             regole={regoleConflitto}
                              etichetta={$etichettaStruttura}
                              {vincoliGlobali} {vincoliSolver}
                              oncompletata={wizardCompletato}
@@ -2843,6 +2844,9 @@
                              onvocabolarioaggiornato={async () => {
                                flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
                                tipiRichiesta = (await adminApi.getTipi()).tipi ?? [];
+                             }}
+                             onregoleaggiornate={async () => {
+                               regoleConflitto = (await adminApi.getRegoleConflitto()).regole ?? [];
                              }} />
 
     {:else if !editPreset}
