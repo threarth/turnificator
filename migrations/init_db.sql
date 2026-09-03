@@ -444,8 +444,6 @@ INSERT OR IGNORE INTO config (chiave, valore, descrizione) VALUES
     ('modalita_ordinamento_desiderata', 'alfabetico_intragruppo', 'Modalità ordinamento foglio desiderata: manuale | alfabetico_globale | alfabetico_intragruppo'),
     ('giorni_lavorativi_settimana', '0,1,2,3,4,5',
      'Giorni della settimana lavorativi (0=lunedi .. 6=domenica)'),
-    ('festivi_lavorativi', '0',
-     'I giorni festivi contano come lavorativi (0=no, 1=si)'),
     ('versione',          '4.0',  'Versione schema database');
 
 -- =============================================================================

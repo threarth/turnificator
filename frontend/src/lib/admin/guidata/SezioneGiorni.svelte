@@ -31,7 +31,6 @@
     let errore = '';
 
     $: lavorativi = leggi(config['giorni_lavorativi_settimana']);
-    $: festiviContano = String(config['festivi_lavorativi'] ?? '0') === '1';
 
     function leggi(grezzo) {
         if (!grezzo) return [...DEFAULT];
@@ -43,11 +42,10 @@
         return numeri.length ? numeri : [...DEFAULT];
     }
 
-    async function salva(nuoviGiorni, nuoviFestivi) {
+    async function salva(nuoviGiorni) {
         errore = '';
         const r = await adminApi.setConfig({
             giorni_lavorativi_settimana: nuoviGiorni.sort((a, b) => a - b).join(','),
-            festivi_lavorativi: nuoviFestivi ? '1' : '0',
         });
         if (!r.ok) { errore = r.errore || 'Salvataggio non riuscito.'; return; }
 
@@ -61,7 +59,7 @@
         // Un mese senza giorni lavorativi darebbe zero turni dovuti a tutti.
         if (!nuovi.length) { errore = 'Almeno un giorno deve essere lavorativo.'; return; }
 
-        salva(nuovi, festiviContano);
+        salva(nuovi);
     }
 </script>
 
@@ -85,21 +83,6 @@
         {/each}
     </div>
 
-    <hr />
-
-    <label class="form-check-label small d-flex align-items-center gap-2">
-        <input type="checkbox" checked={festiviContano}
-               on:change={e => salva(lavorativi, e.target.checked)} />
-        Le festività entrano nei turni dovuti
-    </label>
-    <p class="guidata-aiuto mt-2 mb-0">
-        Se Natale cade di martedì, quel martedì conta fra i turni che ciascuno
-        deve al mese? Spuntandola sì, lasciandola vuota no — e il mese ha un
-        turno dovuto in meno.
-        <br /><br />
-        Non cambia altro: il giorno resta festivo nel calendario, colorato come
-        tale, e continua a contare fra i turni festivi.
-    </p>
 </section>
 
 <section class="guidata-sezione">
@@ -113,7 +96,12 @@
         dal lunedì al sabato, fa <strong>26 turni dovuti</strong>. Chiudendo
         anche il sabato ne fa 22.
         <br /><br />
-        Quel numero è il tetto di ciascuno. Nella sezione <em>Vincoli</em> si
-        può scostarlo in più o in meno per tutti o per una persona sola.
+        <strong>Festivi e superfestivi non sono mai dovuti.</strong> Lavorare un
+        festivo è sempre un turno in più, che matura un recupero: il sistema
+        conta quello che è stato svolto sommando i <em>pesi</em> dei turni
+        assegnati, dove una lunga o una notte valgono due.
+        <br /><br />
+        I dovuti sono il tetto di ciascuno. Nella sezione <em>Vincoli</em> si
+        può scostarlo in più o in meno, per tutti o per una persona sola.
     </p>
 </section>

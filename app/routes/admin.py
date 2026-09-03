@@ -75,7 +75,7 @@ from app.auth import require_role, get_current_user, hash_password
 from app.db import query_one, query_all, execute_write, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
 from app.services.calendario_giorni import (
-    classifica_giorno, festivi_sono_lavorativi, leggi_giorni_lavorativi
+    classifica_giorno, leggi_giorni_lavorativi
 )
 from app.services.config_snapshot import crea_config_snapshot
 from app.services.proposte import (
@@ -2168,14 +2168,11 @@ def crea_calendario():
         "SELECT chiave, valore FROM config", ()
     )}
     giorni_lavorativi = leggi_giorni_lavorativi(config)
-    festivi_lavorativi = festivi_sono_lavorativi(config)
 
     for g in range(1, num_giorni + 1):
         import datetime
         data = datetime.date(int(anno), int(mese), g)
-        tipo, lavorativo = classifica_giorno(
-            data, festivita, giorni_lavorativi, festivi_lavorativi
-        )
+        tipo, lavorativo = classifica_giorno(data, festivita, giorni_lavorativi)
         lav = int(lavorativo)
 
         execute_write(
