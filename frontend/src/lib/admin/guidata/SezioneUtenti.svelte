@@ -58,6 +58,72 @@
     let nuovo = utenteVuoto();
     let errore = '';
 
+    // Inserimento in blocco: si incolla la colonna delle sigle da un foglio.
+    let sigleIncollate = '';
+    let bloccoRuolo = 'basic';
+    let bloccoStruttura = null;
+    let inCorso = false;
+    let credenziali = [];
+
+    // Lunghezza della password provvisoria generata per ogni persona.
+    const CIFRE_PASSWORD = 10;
+    const ALFABETO = 'abcdefghijkmnopqrstuvwxyz23456789';
+
+    /** Sigle separate da spazi, virgole o a capo — come vengono da un incolla. */
+    $: sigleDaCreare = [...new Set(
+        sigleIncollate.split(/[\s,;]+/)
+            .map(s => s.trim().toUpperCase())
+            .filter(Boolean)
+    )];
+
+    $: sigleGiaPresenti = sigleDaCreare.filter(
+        s => utenti.some(u => (u.sigla || '').toUpperCase() === s)
+    );
+    $: sigleNuove = sigleDaCreare.filter(s => !sigleGiaPresenti.includes(s));
+
+    /** Una password provvisoria leggibile, diversa per ciascuno. */
+    function passwordProvvisoria() {
+        const numeri = crypto.getRandomValues(new Uint32Array(CIFRE_PASSWORD));
+        return [...numeri].map(n => ALFABETO[n % ALFABETO.length]).join('');
+    }
+
+    async function creaInBlocco() {
+        if (!sigleNuove.length || inCorso) return;
+
+        inCorso = true;
+        errore = '';
+        credenziali = [];
+
+        const falliti = [];
+        for (const sigla of sigleNuove) {
+            const password = passwordProvvisoria();
+            const r = await adminApi.createUser({
+                username: sigla.toLowerCase(), sigla, password,
+                role: bloccoRuolo, sovragruppo_id: bloccoStruttura,
+            });
+
+            if (r.ok) credenziali = [...credenziali, { sigla, username: sigla.toLowerCase(), password }];
+            else falliti.push(`${sigla}: ${r.errore || 'errore'}`);
+        }
+
+        inCorso = false;
+        if (falliti.length) errore = falliti.join(' · ');
+        if (credenziali.length) sigleIncollate = '';
+
+        await onaggiornati();
+    }
+
+    /** Sposta una persona in un'altra struttura. */
+    async function cambiaStruttura(utente, sovragruppoId) {
+        errore = '';
+        const r = await adminApi.editUtente(utente.id, {
+            ...utente, sovragruppo_id: sovragruppoId || null,
+        });
+        if (!r.ok) { errore = r.errore || 'Modifica non riuscita.'; return; }
+
+        await onaggiornati();
+    }
+
     function utenteVuoto() {
         return { username: '', password: '', sigla: '', role: 'basic', sovragruppo_id: null };
     }
@@ -137,7 +203,20 @@
                         <td class="fw-semibold">{u.sigla}</td>
                         <td>{u.username}</td>
                         <td class="small">{nomeRuolo(u.role)}</td>
-                        <td class="small">{u.sovragruppo_nome || '—'}</td>
+                        <td>
+                            {#if strutture.length}
+                                <select class="form-select form-select-sm"
+                                        value={u.sovragruppo_id ?? ''}
+                                        on:change={e => cambiaStruttura(u, e.target.value ? +e.target.value : null)}>
+                                    <option value="">— nessuna —</option>
+                                    {#each strutture as s}
+                                        <option value={s.id}>{s.nome}</option>
+                                    {/each}
+                                </select>
+                            {:else}
+                                <span class="text-muted small">—</span>
+                            {/if}
+                        </td>
                         <td class="small">{u.is_active ? 'sì' : 'no'}</td>
                     </tr>
                 {/each}
@@ -147,6 +226,77 @@
         <p class="guidata-aiuto mb-0">
             Nessuna persona inserita. Comincia da te stesso o da un caposala.
         </p>
+    {/if}
+</section>
+
+<section class="guidata-sezione guidata-inserimento">
+    <h6 class="guidata-titolo">Inserisci un elenco di sigle</h6>
+    <p class="guidata-aiuto">
+        Incolla la colonna delle sigle da un foglio di calcolo. Il nome utente
+        è la sigla in minuscolo, e per ciascuno viene generata una password
+        provvisoria diversa, che ti compare qui sotto da consegnare.
+    </p>
+
+    <div class="row g-3 align-items-end">
+        <div class="col-auto" style="width:300px">
+            <label class="form-label" for="sigle-blocco">Sigle</label>
+            <textarea id="sigle-blocco" class="form-control form-control-sm" rows="4"
+                      placeholder="ROS&#10;BIA&#10;VER" bind:value={sigleIncollate}></textarea>
+        </div>
+        <div class="col-auto" style="width:170px">
+            <label class="form-label" for="blocco-ruolo">Ruolo</label>
+            <select id="blocco-ruolo" class="form-select form-select-sm" bind:value={bloccoRuolo}>
+                {#each RUOLI as r}<option value={r.valore}>{r.nome}</option>{/each}
+            </select>
+        </div>
+        {#if strutture.length}
+            <div class="col-auto" style="width:190px">
+                <label class="form-label" for="blocco-struttura">{etichetta.singolare}</label>
+                <select id="blocco-struttura" class="form-select form-select-sm"
+                        bind:value={bloccoStruttura}>
+                    <option value={null}>— nessuna —</option>
+                    {#each strutture as s}<option value={s.id}>{s.nome}</option>{/each}
+                </select>
+            </div>
+        {/if}
+        <div class="col-auto">
+            <button class="btn btn-primary btn-sm" disabled={!sigleNuove.length || inCorso}
+                    on:click={creaInBlocco}>
+                {inCorso ? 'Creo…' : `Crea ${sigleNuove.length || ''} persone`.trim()}
+            </button>
+        </div>
+    </div>
+
+    {#if sigleGiaPresenti.length}
+        <p class="guidata-aiuto mt-2 mb-0">
+            Già presenti, verranno saltate: {sigleGiaPresenti.join(', ')}
+        </p>
+    {/if}
+
+    {#if credenziali.length}
+        <div class="mt-3">
+            <div class="fw-semibold small mb-1">Password provvisorie da consegnare</div>
+            <p class="guidata-aiuto">
+                Compaiono una volta sola: copiale adesso. Ciascuno la cambierà al
+                primo accesso.
+            </p>
+            <table class="table table-sm align-middle mb-0" style="max-width:420px">
+                <thead><tr>
+                    <th style="width:90px">Sigla</th>
+                    <th style="width:140px">Nome utente</th>
+                    <th style="width:160px">Password</th>
+                </tr></thead>
+                <tbody>
+                    {#each credenziali as c}
+                        <tr>
+                            <td class="fw-semibold">{c.sigla}</td>
+                            <td class="small">{c.username}</td>
+                            <td><code>{c.password}</code></td>
+                        </tr>
+                    {/each}
+                </tbody>
+            </table>
+        </div>
     {/if}
 </section>
 
