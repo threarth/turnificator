@@ -424,6 +424,10 @@ INSERT OR IGNORE INTO config (chiave, valore, descrizione) VALUES
     ('ore_giornaliere',   '6.5',  'Ore lavorative giornaliere default (decimale)'),
     ('conteggi_context',  '[{"id":"notti","label":"Notti","flag_nome":"notturno","giorno_settimana":null,"negato":false,"attivo":true},{"id":"notti_sab","label":"Notti Sab","flag_nome":"notturno","giorno_settimana":6,"negato":false,"attivo":true},{"id":"notti_dom","label":"Notti Dom","flag_nome":"notturno","giorno_settimana":0,"negato":false,"attivo":true},{"id":"no_notti_sab","label":"Turni Sab","flag_nome":"notturno","giorno_settimana":6,"negato":true,"attivo":true},{"id":"no_notti_dom","label":"Turni Dom","flag_nome":"notturno","giorno_settimana":0,"negato":true,"attivo":true}]', 'Conteggi visibili nel context menu lavoratore (JSON)'),
     ('modalita_ordinamento_desiderata', 'alfabetico_intragruppo', 'Modalità ordinamento foglio desiderata: manuale | alfabetico_globale | alfabetico_intragruppo'),
+    ('giorni_lavorativi_settimana', '0,1,2,3,4,5',
+     'Giorni della settimana lavorativi (0=lunedi .. 6=domenica)'),
+    ('festivi_lavorativi', '0',
+     'I giorni festivi contano come lavorativi (0=no, 1=si)'),
     ('versione',          '4.0',  'Versione schema database');
 
 -- =============================================================================

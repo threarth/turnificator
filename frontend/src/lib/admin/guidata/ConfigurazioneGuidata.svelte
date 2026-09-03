@@ -41,6 +41,7 @@
     import SezioneUtenti from './SezioneUtenti.svelte';
     import SezioneAssenze from './SezioneAssenze.svelte';
     import SezioneRegole from './SezioneRegole.svelte';
+    import SezioneGiorni from './SezioneGiorni.svelte';
 
     export let fasce = [];
     export let tipologie = [];
@@ -48,6 +49,7 @@
     export let utenti = [];
     export let tipiRichiesta = [];
     export let regole = [];
+    export let config = {};
     export let sovragruppi = [];
     export let etichetta = { singolare: 'Struttura', plurale: 'Strutture' };
     export let vincoliGlobali = [];
@@ -61,6 +63,7 @@
     export let onutentiaggiornati;
     export let onvocabolarioaggiornato;
     export let onregoleaggiornate;
+    export let onconfigaggiornata;
 
     // Pausa obbligatoria di default, in minuti.
     const PAUSA_DEFAULT_MINUTI = 10;
@@ -87,6 +90,7 @@
         { id: 'turni',      nome: 'I turni',           chiusa: false },
         { id: 'utenti',     nome: 'Le persone',        chiusa: true },
         { id: 'conteggi',   nome: 'Conteggi',          chiusa: true },
+        { id: 'giorni',     nome: 'Giorni lavorativi', chiusa: true },
         { id: 'regole',     nome: 'Regole',            chiusa: true },
         { id: 'vincoli',    nome: 'Vincoli',           chiusa: true },
     ];
@@ -729,6 +733,11 @@
         {#if sezioneCorrente === 'conteggi'}
             <SezioneConteggi {conteggi} fasce={fasceDisponibili} {tipologie}
                              onaggiornati={onconteggiaggiornati} />
+        {/if}
+
+        <!-- ═══ Giorni lavorativi ═══ -->
+        {#if sezioneCorrente === 'giorni'}
+            <SezioneGiorni {config} onaggiornata={onconfigaggiornata} />
         {/if}
 
         <!-- ═══ Regole ═══ -->

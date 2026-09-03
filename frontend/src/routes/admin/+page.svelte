@@ -2823,7 +2823,7 @@
                              conteggi={conteggiConfig}
                              {utenti} sovragruppi={sovragruppiDisponibili}
                              tipiRichiesta={tipiRichiesta}
-                             regole={regoleConflitto}
+                             regole={regoleConflitto} {config}
                              etichetta={$etichettaStruttura}
                              {vincoliGlobali} {vincoliSolver}
                              oncompletata={wizardCompletato}
@@ -2847,6 +2847,9 @@
                              }}
                              onregoleaggiornate={async () => {
                                regoleConflitto = (await adminApi.getRegoleConflitto()).regole ?? [];
+                             }}
+                             onconfigaggiornata={async () => {
+                               config = (await adminApi.getConfig()).config ?? {};
                              }} />
 
     {:else if !editPreset}
