@@ -345,6 +345,7 @@ def _migra_colonne(db):
         ('flag_turno',         'ore_primo_giorno',    'REAL DEFAULT NULL'),
         ('flag_turno',         'ore_ultimo_giorno',   'REAL DEFAULT NULL'),
         ('flag_turno',         'mostra_in_struttura', 'INTEGER NOT NULL DEFAULT 1'),
+        ('flag_turno',         'solo_su_richiesta',   'INTEGER NOT NULL DEFAULT 0'),
         # Snapshot parametri ore/peso in calendario_turni
         ('calendario_turni',   'peso_turno',          'INTEGER NOT NULL DEFAULT 1'),
         ('calendario_turni',   'ore_turno',           'REAL DEFAULT NULL'),
@@ -467,7 +468,7 @@ def _migra_colonne(db):
 
     # Seed dei flag e derivazione dei parametri: dopo le ALTER, perche'
     # inseriscono e leggono le colonne appena aggiunte.
-    _rimuovi_concetto_composto(db)
+    _rimuovi_colonna_entita(db)
     _inserisci_flag_default(db)
     inserisci_tipi_richiesta_default(db)
     _nascondi_assenze_dalla_struttura(db)
@@ -582,26 +583,20 @@ def _nascondi_assenze_dalla_struttura(db):
         log.warning('Nascondere le assenze dalla struttura turni e\' fallito: %s', e)
 
 
-def _rimuovi_concetto_composto(db):
+def _rimuovi_colonna_entita(db):
     """
-    Elimina il concetto di flag "composto": colonna `entita` e tabella
-    `flag_composizione`.
+    Elimina la colonna `flag_turno.entita`, residuo del concetto "composto".
 
-    Feature removal. Un flag composto elencava i flag che lo compongono
-    (lunga = mattina + pomeriggio); con le fasce orarie la stessa
-    informazione sta negli orari della fascia (lunga e' 08:00-20:40), quindi
-    la composizione e' una duplicazione che puo' divergere dagli orari.
+    Feature removal. `entita` distingueva i flag semplici dai composti, e
+    serviva a dire che la lunga vale due turni — cosa che oggi discende dagli
+    orari, dove non puo' divergere.
 
-    Idempotente: entrambi i passi sono protetti da un controllo di esistenza,
-    cosi' l'avvio successivo non trova piu' nulla da fare.
+    Attenzione: `flag_composizione` **non** si tocca. La tabella e' tornata
+    con un altro scopo — quali fasce insieme soddisfano la richiesta di
+    un'altra — e questa migrazione la cancellava a ogni avvio.
+
+    Idempotente: protetta da un controllo di esistenza della colonna.
     """
-    try:
-        db.execute('DROP TABLE IF EXISTS flag_composizione')
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        log.warning('Rimozione della tabella flag_composizione fallita: %s', e)
-
     try:
         colonne = [r[1] for r in db.execute('PRAGMA table_info(flag_turno)').fetchall()]
         if 'entita' in colonne:

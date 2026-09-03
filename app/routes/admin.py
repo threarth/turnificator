@@ -100,7 +100,7 @@ COLONNE_FLAG = (
     "f.orario_inizio, f.orario_fine, f.pausa_minuti, "
     "f.durata_netta_minuti, f.durata_totale_minuti, "
     "f.peso_turno, f.ore_turno, f.ore_primo_giorno, f.ore_ultimo_giorno, "
-    "f.mostra_in_struttura, f.tipo"
+    "f.mostra_in_struttura, f.solo_su_richiesta, f.tipo"
 )
 
 # Valori ammessi dalla colonna flag_turno.tipo.
@@ -221,6 +221,18 @@ def lista_flag_turno():
         "ORDER BY f.parent_id NULLS FIRST, f.id",
         ()
     )
+
+    # Da cosa e' soddisfatta la richiesta di una fascia: chi chiede la lunga
+    # puo' ricevere mattina + pomeriggio.
+    composizione = {}
+    for r in query_all(
+        "SELECT flag_id, componente_flag_id FROM flag_composizione", ()
+    ):
+        composizione.setdefault(r['flag_id'], []).append(r['componente_flag_id'])
+
+    for f in flag:
+        f['componenti'] = composizione.get(f['id'], [])
+
     return jsonify({'ok': True, 'flags': flag}), 200
 
 
@@ -255,14 +267,15 @@ def crea_flag_turno():
         "INSERT INTO flag_turno (nome, parent_id, descrizione, "
         "orario_inizio, orario_fine, pausa_minuti, durata_netta_minuti, "
         "peso_turno, ore_turno, ore_primo_giorno, ore_ultimo_giorno, "
-        "mostra_in_struttura, tipo) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "mostra_in_struttura, solo_su_richiesta, tipo) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (nome, parent_id, descrizione or None,
          orari['orario_inizio'], orari['orario_fine'], orari['pausa_minuti'],
          dati.get('durata_netta_minuti'),
          dati.get('peso_turno'), dati.get('ore_turno'),
          dati.get('ore_primo_giorno'), dati.get('ore_ultimo_giorno'),
-         _visibilita_in_struttura(dati, tipo), tipo)
+         _visibilita_in_struttura(dati, tipo),
+         int(bool(dati.get('solo_su_richiesta', False))), tipo)
     )
 
     ricalcola_tutte(get_db())
@@ -305,7 +318,7 @@ def modifica_flag_turno(fid):
         "UPDATE flag_turno SET nome=?, descrizione=?, parent_id=?, "
         "orario_inizio=?, orario_fine=?, pausa_minuti=?, durata_netta_minuti=?, "
         "peso_turno=?, ore_turno=?, ore_primo_giorno=?, ore_ultimo_giorno=?, "
-        "mostra_in_struttura=?, tipo=? WHERE id=?",
+        "mostra_in_struttura=?, solo_su_richiesta=?, tipo=? WHERE id=?",
         (
             nuovo_nome,
             dati.get('descrizione', f['descrizione']),
@@ -316,7 +329,9 @@ def modifica_flag_turno(fid):
             dati.get('ore_turno', f.get('ore_turno')),
             dati.get('ore_primo_giorno', f.get('ore_primo_giorno')),
             dati.get('ore_ultimo_giorno', f.get('ore_ultimo_giorno')),
-            mostra, tipo, fid
+            mostra,
+            int(bool(dati.get('solo_su_richiesta', f.get('solo_su_richiesta', 0)))),
+            tipo, fid
         )
     )
 

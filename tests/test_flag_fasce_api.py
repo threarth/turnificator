@@ -34,26 +34,38 @@ def _flag_per_nome(client, token, auth, nome):
 # Rimozione del concetto "composto"
 # ---------------------------------------------------------------------------
 
-def test_schema_senza_entita_e_composizione(app, _test_env):
-    """L'avvio dell'app toglie la colonna entita e la tabella flag_composizione."""
+def test_schema_senza_la_colonna_entita(app, _test_env):
+    """
+    `entita` distingueva i flag semplici dai composti, e diceva che la lunga
+    vale due turni: oggi lo dicono gli orari, dove non puo' divergere.
+    """
     db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
 
     colonne = [r[1] for r in db.execute('PRAGMA table_info(flag_turno)')]
     assert 'entita' not in colonne
 
+
+def test_la_tabella_composizione_esiste_con_un_altro_scopo(app, _test_env):
+    """
+    `flag_composizione` e' tornata, ma non dice piu' quanto vale una fascia:
+    dice quali fasce insieme soddisfano la richiesta di un'altra. La
+    migrazione che tolse `entita` non deve piu' cancellarla.
+    """
+    db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
+
     tabelle = db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='flag_composizione'"
     ).fetchall()
-    assert tabelle == []
+    assert tabelle != []
 
 
-def test_rimozione_composto_idempotente(app, _test_env):
+def test_rimozione_colonna_entita_idempotente(app, _test_env):
     """Rieseguire la migrazione su uno schema gia' pulito non solleva nulla."""
-    from app import _rimuovi_concetto_composto
+    from app import _rimuovi_colonna_entita
 
     db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
-    _rimuovi_concetto_composto(db)
-    _rimuovi_concetto_composto(db)
+    _rimuovi_colonna_entita(db)
+    _rimuovi_colonna_entita(db)
 
     colonne = [r[1] for r in db.execute('PRAGMA table_info(flag_turno)')]
     assert 'entita' not in colonne
@@ -61,12 +73,15 @@ def test_rimozione_composto_idempotente(app, _test_env):
 
 
 def test_lista_flag_non_espone_entita(client, admin_token, auth):
-    """La lista non porta piu' ne' entita ne' componenti."""
+    """
+    `entita` non c'e' piu'; `componenti` si', ma dice un'altra cosa: da quali
+    fasce e' soddisfatta la richiesta di questa.
+    """
     mattina = _flag_per_nome(client, admin_token, auth, FASCIA_MATTINA)
 
     assert mattina is not None
     assert 'entita' not in mattina
-    assert 'componenti' not in mattina
+    assert mattina['componenti'] == []
 
 
 # ---------------------------------------------------------------------------

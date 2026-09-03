@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS flag_turno (
     ore_primo_giorno  REAL    DEFAULT NULL,
     ore_ultimo_giorno REAL    DEFAULT NULL,
     mostra_in_struttura INTEGER NOT NULL DEFAULT 1,
+    -- Il riempimento automatico non usa la fascia di sua iniziativa: la
+    -- mette solo dove il lavoratore l'ha chiesta. E' il caso della lunga.
+    solo_su_richiesta   INTEGER NOT NULL DEFAULT 0,
     tipo              TEXT    NOT NULL DEFAULT 'lavorativo' CHECK(tipo IN ('lavorativo', 'assenza'))
 );
 
@@ -154,6 +157,21 @@ CREATE TABLE IF NOT EXISTS proposte_configurazione (
 -- l'amministratore a scegliere fra cose che non ha chiesto.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proposte_in_attesa
     ON proposte_configurazione(stato) WHERE stato = 'in_attesa';
+
+-- =============================================================================
+-- TABELLA: flag_composizione
+-- Quali fasce, messe insieme, soddisfano la richiesta di un'altra: chi chiede
+-- la lunga puo' ricevere mattina + pomeriggio.
+--
+-- Serve SOLO a questo. Durata, ore e peso restano derivati dagli orari e non
+-- si leggono mai da qui: e' la confusione fra le due cose che aveva reso
+-- questa tabella una fonte di divergenze, la prima volta che e' esistita.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS flag_composizione (
+    flag_id            INTEGER NOT NULL REFERENCES flag_turno(id) ON DELETE CASCADE,
+    componente_flag_id INTEGER NOT NULL REFERENCES flag_turno(id) ON DELETE CASCADE,
+    PRIMARY KEY (flag_id, componente_flag_id)
+);
 
 -- =============================================================================
 -- TABELLA: struttura_presets

@@ -90,13 +90,15 @@
     <label class="form-check-label small d-flex align-items-center gap-2">
         <input type="checkbox" checked={festiviContano}
                on:change={e => salva(lavorativi, e.target.checked)} />
-        I giorni festivi contano come lavorativi
+        Le festività entrano nei turni dovuti
     </label>
     <p class="guidata-aiuto mt-2 mb-0">
-        Le domeniche e le festività restano riconoscibili nel calendario anche
-        se non contano: servono a colorarle e a contare i turni festivi. Questa
-        casella dice solo se entrano nei turni dovuti — un reparto sempre
-        aperto la spunta, uno che chiude no.
+        Se Natale cade di martedì, quel martedì conta fra i turni che ciascuno
+        deve al mese? Spuntandola sì, lasciandola vuota no — e il mese ha un
+        turno dovuto in meno.
+        <br /><br />
+        Non cambia altro: il giorno resta festivo nel calendario, colorato come
+        tale, e continua a contare fra i turni festivi.
     </p>
 </section>
 
