@@ -39,6 +39,18 @@
     let stats = null;
     let statsLoading = false;
 
+    // Pannello "cambia password": un tenant per volta, con l'elenco dei suoi
+    // amministratori. Da quando il ruolo si cambia dalla configurazione, un
+    // tenant puo' averne piu' d'uno e bisogna dire a chi.
+    let pwdTenantId = null;
+    let pwdAmministratori = [];
+    let pwdSceltoId = null;
+    let pwdNuova = '';
+    let pwdInCorso = false;
+
+    // Lunghezza minima, la stessa che chiede il cambio password nel tenant.
+    const PASSWORD_MIN = 8;
+
     onMount(async () => {
         if (!$user || $user.role !== 'master_admin') {
             goto('/login');
@@ -133,14 +145,56 @@
         await caricaDati();
     }
 
-    async function resetPassword(t) {
-        if (!confirm(`Reset password admin di "${t.nome}"?`)) return;
-        const res = await masterApi.resetAdminPwd(t.id);
+    /** Apre (o richiude) il pannello password di un tenant. */
+    async function apriPassword(t) {
+        if (pwdTenantId === t.id) { pwdTenantId = null; return; }
+
+        errore = '';
+        pwdTenantId = t.id;
+        pwdNuova = '';
+        pwdAmministratori = [];
+        pwdSceltoId = null;
+
+        const res = await masterApi.getAmministratori(t.id);
         if (res.ok === false) {
-            errore = res.errore || 'Errore reset.';
-        } else {
-            successo = `Nuova password di ${res.admin_username || 'admin'} ("${t.nome}"): ${res.nuova_password || '(vedi log)'}`;
+            errore = res.errore || 'Amministratori non leggibili.';
+            pwdTenantId = null;
+            return;
         }
+
+        pwdAmministratori = res.amministratori ?? [];
+        pwdSceltoId = pwdAmministratori[0]?.id ?? null;
+    }
+
+    /** Cambia la password dell'amministratore scelto. Vuota = generata. */
+    async function cambiaPassword(t) {
+        if (!pwdSceltoId || pwdInCorso) return;
+
+        const scelta = pwdNuova.trim();
+        if (scelta && scelta.length < PASSWORD_MIN) {
+            errore = `La password deve essere di almeno ${PASSWORD_MIN} caratteri.`;
+            return;
+        }
+
+        errore = '';
+        pwdInCorso = true;
+        const res = await masterApi.cambiaPasswordAdmin(t.id, {
+            user_id: pwdSceltoId,
+            ...(scelta ? { password: scelta } : {}),
+        });
+        pwdInCorso = false;
+
+        if (res.ok === false) {
+            errore = res.errore || 'Cambio password non riuscito.';
+            return;
+        }
+
+        successo = res.generata
+            ? `Password generata per ${res.admin_username} ("${t.nome}"): `
+              + `${res.nuova_password} — copiala, non verra' mostrata di nuovo.`
+            : `Password di ${res.admin_username} ("${t.nome}") cambiata.`;
+        pwdTenantId = null;
+        pwdNuova = '';
     }
 
     async function impersona(t) {
@@ -328,7 +382,8 @@
                                                 <i class="bi bi-person-badge"></i>
                                             </button>
                                             <button class="btn btn-outline-secondary"
-                                                    title="Reset password admin" on:click={() => resetPassword(t)}>
+                                                    title="Cambia la password di un amministratore"
+                                                    on:click={() => apriPassword(t)}>
                                                 <i class="bi bi-key"></i>
                                             </button>
                                         {/if}
@@ -341,6 +396,57 @@
                                 {/if}
                             </td>
                         </tr>
+                        <!-- Pannello: cambia la password di un amministratore -->
+                        {#if pwdTenantId === t.id}
+                            <tr>
+                                <td colspan="6" class="bg-light">
+                                    {#if !pwdAmministratori.length}
+                                        <div class="small text-muted py-2 px-2">
+                                            Nessun amministratore in questo tenant.
+                                        </div>
+                                    {:else}
+                                        <div class="d-flex gap-3 align-items-end flex-wrap py-2 px-2">
+                                            <div style="width:200px">
+                                                <label class="form-label small mb-1" for="pwd-chi-{t.id}">
+                                                    Amministratore
+                                                </label>
+                                                <select id="pwd-chi-{t.id}" class="form-select form-select-sm"
+                                                        bind:value={pwdSceltoId}>
+                                                    {#each pwdAmministratori as a}
+                                                        <option value={a.id}>
+                                                            {a.username}{a.is_active ? '' : ' (disattivato)'}
+                                                        </option>
+                                                    {/each}
+                                                </select>
+                                            </div>
+                                            <div style="width:260px">
+                                                <label class="form-label small mb-1" for="pwd-nuova-{t.id}">
+                                                    Nuova password
+                                                </label>
+                                                <input id="pwd-nuova-{t.id}" class="form-control form-control-sm"
+                                                       placeholder="vuoto = generata dal programma"
+                                                       bind:value={pwdNuova} />
+                                            </div>
+                                            <button class="btn btn-sm btn-primary" disabled={pwdInCorso}
+                                                    on:click={() => cambiaPassword(t)}>
+                                                {#if pwdInCorso}
+                                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                                {/if}
+                                                Cambia la password
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-secondary"
+                                                    on:click={() => pwdTenantId = null}>Annulla</button>
+                                        </div>
+                                        <div class="small text-muted px-2 pb-2">
+                                            Scrivine una se devi dettarla a voce, altrimenti lasciala
+                                            vuota e il programma ne genera una robusta, mostrata una
+                                            volta sola. L'operazione resta nel registro degli accessi.
+                                        </div>
+                                    {/if}
+                                </td>
+                            </tr>
+                        {/if}
+
                         <!-- Stats row -->
                         {#if statsId === t.id}
                             <tr>

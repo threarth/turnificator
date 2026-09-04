@@ -400,3 +400,100 @@ def test_un_amministratore_si_puo_togliere_se_ce_n_e_un_altro(client, admin_toke
     rv = client.put(f"/api/admin/users/{admin['id']}",
                     json={'role': 'manager'}, headers=auth(admin_token))
     assert rv.status_code == 200, rv.get_json()
+
+
+# ---------------------------------------------------------------------------
+# Il superadmin cambia una password
+# ---------------------------------------------------------------------------
+
+def _id_tenant(client, master_token, auth, slug):
+    """L'id di un tenant, dal registro del master."""
+    elenco = client.get('/api/master/tenants', headers=auth(master_token)).get_json()
+    return next(t['id'] for t in elenco['tenants'] if t['slug'] == slug)
+
+
+def test_il_superadmin_vede_gli_amministratori_di_un_tenant(client, master_token, auth, tenant_b):
+    """Per cambiare una password bisogna prima sapere a chi."""
+    tid = _id_tenant(client, master_token, auth, SLUG_B)
+
+    rv = client.get(f'/api/master/tenants/{tid}/amministratori', headers=auth(master_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    nomi = [a['username'] for a in rv.get_json()['amministratori']]
+    assert tenant_b['username'] in nomi
+
+
+def test_il_superadmin_puo_scegliere_la_password(client, master_token, auth, tenant_b):
+    """Quando deve dettarla a voce, la sceglie lui e il tenant la accetta."""
+    tid = _id_tenant(client, master_token, auth, SLUG_B)
+    scelta = 'DettataAVoce2027'
+
+    rv = client.post(f'/api/master/tenants/{tid}/reset-admin',
+                     json={'password': scelta}, headers=auth(master_token))
+    assert rv.status_code == 200, rv.get_json()
+    assert rv.get_json()['generata'] is False
+
+    rv = client.post('/api/auth/login', json={
+        'tenant': SLUG_B, 'username': tenant_b['username'], 'password': scelta,
+    })
+    assert rv.status_code == 200, rv.get_json()
+
+
+def test_senza_password_il_programma_ne_genera_una(client, master_token, auth, tenant_b):
+    """Il comportamento di prima resta, e la password torna una volta sola."""
+    tid = _id_tenant(client, master_token, auth, SLUG_B)
+
+    rv = client.post(f'/api/master/tenants/{tid}/reset-admin',
+                     json={}, headers=auth(master_token))
+    assert rv.status_code == 200, rv.get_json()
+    corpo = rv.get_json()
+    assert corpo['generata'] is True
+
+    rv = client.post('/api/auth/login', json={
+        'tenant': SLUG_B, 'username': corpo['admin_username'],
+        'password': corpo['nuova_password'],
+    })
+    assert rv.status_code == 200, rv.get_json()
+
+
+def test_una_password_troppo_corta_viene_rifiutata(client, master_token, auth, tenant_b):
+    """Il minimo e' lo stesso che il tenant chiede ai suoi utenti."""
+    tid = _id_tenant(client, master_token, auth, SLUG_B)
+
+    rv = client.post(f'/api/master/tenants/{tid}/reset-admin',
+                     json={'password': 'corta'}, headers=auth(master_token))
+
+    assert rv.status_code == 400
+    assert 'almeno' in rv.get_json()['errore']
+
+
+def test_non_si_cambia_la_password_di_chi_non_e_amministratore(client, master_token, auth, tenant_b):
+    """La route serve agli amministratori: gli altri utenti sono del tenant."""
+    tid = _id_tenant(client, master_token, auth, SLUG_B)
+
+    rv = client.post(f'/api/master/tenants/{tid}/reset-admin',
+                     json={'user_id': 999999}, headers=auth(master_token))
+
+    assert rv.status_code == 404
+
+
+def test_il_cambio_password_resta_nel_registro(client, master_token, auth, tenant_b):
+    """Un intervento dall'alto sulle credenziali non deve essere muto."""
+    tid = _id_tenant(client, master_token, auth, SLUG_B)
+
+    client.post(f'/api/master/tenants/{tid}/reset-admin',
+                json={'password': 'RegistrataQui2027'}, headers=auth(master_token))
+
+    log = client.get('/api/master/impersonation-log', headers=auth(master_token)).get_json()
+    righe = [r for r in log['log']
+             if r['tenant_slug'] == SLUG_B and r['azione'] == 'reset_password']
+
+    assert righe, 'il cambio password non compare nel registro'
+
+
+def test_un_admin_di_tenant_non_cambia_le_password_altrui(client, admin_token, auth, tenant_b):
+    """Resta un potere di piattaforma, non di reparto."""
+    rv = client.post('/api/master/tenants/1/reset-admin',
+                     json={'password': 'NonDovrebbe2027'}, headers=auth(admin_token))
+
+    assert rv.status_code == 403

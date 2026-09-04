@@ -23,6 +23,7 @@ from flask import Blueprint, request, jsonify, current_app, g
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt
 
 from app.auth import (
+    LUNGHEZZA_MINIMA_PASSWORD,
     authenticate_master, cambia_password_master, get_current_master_user,
     require_master_role, hash_password
 )
@@ -30,6 +31,15 @@ from app.db import get_master_db, _open_db, _get_tenant_key
 from app.services.utenti import SIGLA_ADMIN, nome_admin_tenant
 
 bp = Blueprint('master', __name__, url_prefix='/api/master')
+
+# Lunghezza della password generata quando il superadmin non ne sceglie una.
+# Sono byte prima della codifica: il testo che ne esce e' piu' lungo.
+CIFRE_PASSWORD_GENERATA = 12
+
+# Azioni registrate in impersonation_log. Non e' solo l'impersonation: il
+# registro tiene gli interventi del superadmin dentro un tenant.
+AZIONE_INGRESSO = 'enter'
+AZIONE_CAMBIO_PASSWORD = 'reset_password'
 
 
 # =========================================================================
@@ -247,7 +257,7 @@ def crea_tenant():
         # dimostrativa, ma in un tenant creato dal master sarebbe una porta
         # aperta a chiunque conosca lo slug — che il menu del login mostra.
         # Lasciandolo, la password generata qui sotto non proteggerebbe nulla.
-        admin_password = secrets.token_urlsafe(12)
+        admin_password = secrets.token_urlsafe(CIFRE_PASSWORD_GENERATA)
         admin_hash = hash_password(admin_password)
         conn.execute("DELETE FROM users WHERE role='admin'")
         conn.execute(
@@ -456,13 +466,61 @@ def stats_tenant(tenant_id):
     }), 200
 
 
+@bp.route('/tenants/<int:tenant_id>/amministratori', methods=['GET'])
+@require_master_role()
+def lista_amministratori_tenant(tenant_id):
+    """
+    Gli amministratori di un tenant.
+
+    Da quando il ruolo si cambia dalla configurazione, un tenant puo' averne
+    piu' d'uno: per cambiare una password bisogna prima sapere a chi.
+    """
+    tenant = get_master_db().execute(
+        "SELECT slug, nome FROM tenants WHERE id = ?", (tenant_id,)
+    ).fetchone()
+    if not tenant:
+        return jsonify({'ok': False, 'errore': 'Tenant non trovato.'}), 404
+
+    try:
+        db = _apri_tenant(tenant['slug'])
+        righe = db.execute(
+            "SELECT id, username, sigla, is_active FROM users "
+            "WHERE role = 'admin' ORDER BY id"
+        ).fetchall()
+        db.close()
+    except Exception as e:
+        current_app.logger.warning(
+            'Lettura degli amministratori del tenant %s fallita: %s', tenant['slug'], e
+        )
+        return jsonify({'ok': False, 'errore': 'Database del tenant non leggibile.'}), 500
+
+    return jsonify({
+        'ok': True,
+        'tenant': tenant['nome'],
+        'amministratori': [dict(r) for r in righe],
+    }), 200
+
+
 @bp.route('/tenants/<int:tenant_id>/reset-admin', methods=['POST'])
 @require_master_role()
 def reset_admin_password(tenant_id):
     """
-    Reset password dell'admin di un tenant.
+    Cambia la password di un amministratore di un tenant.
 
-    Genera una nuova password casuale e la restituisce al master admin.
+    Il superadmin puo' sceglierne una — quando deve dettarla a voce — oppure
+    lasciar fare al programma, che ne genera una robusta. Puo' anche scegliere
+    a quale amministratore, perche' un tenant puo' averne piu' d'uno; senza
+    indicazione vale il primo, che e' il comportamento di prima.
+
+    L'operazione resta nel registro: cambiare le credenziali di qualcuno e'
+    un intervento dall'alto come l'impersonation, e non deve essere muto.
+
+    Body JSON opzionale:
+        user_id (int): quale amministratore.
+        password (str): la password da impostare; senza, viene generata.
+
+    Returns:
+        200: { ok, admin_username, nuova_password, generata }
     """
     master = get_master_db()
     tenant = master.execute(
@@ -472,50 +530,87 @@ def reset_admin_password(tenant_id):
     if not tenant:
         return jsonify({'ok': False, 'errore': 'Tenant non trovato.'}), 404
 
-    new_password = secrets.token_urlsafe(12)
-    new_hash = hash_password(new_password)
+    dati = request.get_json(silent=True) or {}
+    scelta = (dati.get('password') or '').strip()
+    generata = not scelta
+
+    if scelta and len(scelta) < LUNGHEZZA_MINIMA_PASSWORD:
+        return jsonify({
+            'ok': False,
+            'errore': f'La password deve essere di almeno '
+                      f'{LUNGHEZZA_MINIMA_PASSWORD} caratteri.'
+        }), 400
+
+    nuova_password = scelta or secrets.token_urlsafe(CIFRE_PASSWORD_GENERATA)
 
     try:
-        g.tenant_slug = tenant['slug']
-        from app.db import get_db
-        db = get_db()
-
-        admin = db.execute(
-            "SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
-        ).fetchone()
+        db = _apri_tenant(tenant['slug'])
+        admin = _amministratore_scelto(db, dati.get('user_id'))
 
         if not admin:
+            db.close()
             return jsonify({
                 'ok': False,
-                'errore': 'Nessun admin trovato in questo tenant.'
+                'errore': 'Amministratore non trovato in questo tenant.'
             }), 404
 
-        admin_username = admin['username']
         db.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
-            (new_hash, admin['id'])
+            (hash_password(nuova_password), admin['id'])
         )
         db.commit()
         db.close()
-        g.pop('db', None)
 
     except Exception as e:
-        return jsonify({
-            'ok': False,
-            'errore': f'Errore reset password: {e}'
-        }), 500
+        current_app.logger.warning(
+            'Cambio password nel tenant %s fallito: %s', tenant['slug'], e
+        )
+        return jsonify({'ok': False, 'errore': 'Cambio password non riuscito.'}), 500
+
+    master.execute(
+        "INSERT INTO impersonation_log (master_user_id, tenant_id, azione, dettaglio) "
+        "VALUES (?, ?, ?, ?)",
+        (get_current_master_user()['id'], tenant_id, AZIONE_CAMBIO_PASSWORD,
+         f"password di {admin['username']} "
+         f"({'generata' if generata else 'scelta dal superadmin'})")
+    )
+    master.commit()
 
     return jsonify({
         'ok': True,
-        'messaggio': f"Password di {admin_username} ('{tenant['nome']}') resettata.",
-        'admin_username': admin_username,
-        'nuova_password': new_password
+        'messaggio': f"Password di {admin['username']} (\"{tenant['nome']}\") cambiata.",
+        'admin_username': admin['username'],
+        'nuova_password': nuova_password,
+        'generata': generata,
     }), 200
 
 
-# =========================================================================
-# Impersonation
-# =========================================================================
+def _amministratore_scelto(db, user_id):
+    """
+    L'amministratore su cui intervenire.
+
+    Args:
+        db: connessione al tenant.
+        user_id (int|None): quale amministratore; None per il primo.
+
+    Returns:
+        riga di users, o None se l'utente non esiste o non e' amministratore
+        di questo tenant.
+    """
+    if user_id is None:
+        return db.execute(
+            "SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+        ).fetchone()
+
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+    return db.execute(
+        "SELECT id, username FROM users WHERE id = ? AND role = 'admin'", (uid,)
+    ).fetchone()
+
 
 @bp.route('/tenants/<int:tenant_id>/impersonate', methods=['POST'])
 @require_master_role()
@@ -591,8 +686,8 @@ def impersonate_tenant(tenant_id):
     # Log nel master DB
     master.execute(
         "INSERT INTO impersonation_log (master_user_id, tenant_id, azione, dettaglio) "
-        "VALUES (?, ?, 'enter', ?)",
-        (master_user['id'], tenant_id, motivo)
+        "VALUES (?, ?, ?, ?)",
+        (master_user['id'], tenant_id, AZIONE_INGRESSO, motivo)
     )
     master.commit()
 

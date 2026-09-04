@@ -390,7 +390,8 @@ export const masterApi = {
     updateTenant:    (id, dati)   => api.put(`/api/master/tenants/${id}`, dati),
     deleteTenant:    (id)         => api.delete(`/api/master/tenants/${id}`),
     getTenantStats:  (id)         => api.get(`/api/master/tenants/${id}/stats`),
-    resetAdminPwd:   (id)         => api.post(`/api/master/tenants/${id}/reset-admin`),
+    getAmministratori:   (id)       => api.get(`/api/master/tenants/${id}/amministratori`),
+    cambiaPasswordAdmin: (id, dati) => api.post(`/api/master/tenants/${id}/reset-admin`, dati),
     impersonate:     (id)         => api.post(`/api/master/tenants/${id}/impersonate`),
 
     // Template CRUD
