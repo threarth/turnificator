@@ -85,6 +85,7 @@ from app.services.fasce_orarie import (
     NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
     FormatoOrarioNonValido, parse_orario, ricalcola_tutte
 )
+from app.services.validatori import TIPI_REGOLA
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
@@ -210,6 +211,60 @@ def _visibilita_in_struttura(dati, tipo, corrente=1):
     return int(bool(richiesto))
 
 
+def _scrivi_composizione(flag_id, componenti):
+    """
+    Riscrive da quali fasce e' soddisfatta la richiesta di questa.
+
+    Sostituisce l'elenco intero: la composizione e' una lista, non un insieme
+    di righe da aggiungere una per volta. Una fascia non compone se stessa, e
+    un id sconosciuto e' un errore del chiamante, non una riga da ignorare.
+
+    Args:
+        flag_id (int): la fascia composta, es. la lunga.
+        componenti (list|None): id delle fasce che la compongono; None lascia
+                                la composizione com'e', [] la svuota.
+
+    Returns:
+        str|None: messaggio d'errore, None se la scrittura e' andata.
+    """
+    if componenti is None:
+        return None
+
+    try:
+        ids = [int(c) for c in componenti]
+    except (TypeError, ValueError):
+        return 'Composizione non valida: attesi id di fasce.'
+
+    ids = sorted(set(ids))
+
+    if flag_id in ids:
+        return 'Una fascia non puo\' comporre se stessa.'
+
+    for cid in ids:
+        if not query_one("SELECT id FROM flag_turno WHERE id=?", (cid,)):
+            return f'Fascia {cid} non trovata: non puo\' comporre.'
+
+    # Cancellazione e reinserimento sono la stessa scrittura: a meta' strada
+    # la fascia risulterebbe composta da niente.
+    db = get_db()
+    try:
+        db.execute("DELETE FROM flag_composizione WHERE flag_id=?", (flag_id,))
+        db.executemany(
+            "INSERT INTO flag_composizione (flag_id, componente_flag_id) "
+            "VALUES (?,?)",
+            [(flag_id, cid) for cid in ids]
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        current_app.logger.warning(
+            'Scrittura della composizione della fascia %s fallita: %s', flag_id, e
+        )
+        return 'Composizione non salvata.'
+
+    return None
+
+
 @bp.route('/flag-turno', methods=['GET'])
 @require_role('admin', 'manager')
 def lista_flag_turno():
@@ -278,6 +333,10 @@ def crea_flag_turno():
          int(bool(dati.get('solo_su_richiesta', False))), tipo)
     )
 
+    errore = _scrivi_composizione(cur.lastrowid, dati.get('componenti'))
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
     ricalcola_tutte(get_db())
 
     return jsonify({'ok': True, 'id': cur.lastrowid}), 201
@@ -334,6 +393,10 @@ def modifica_flag_turno(fid):
             tipo, fid
         )
     )
+
+    errore = _scrivi_composizione(fid, dati.get('componenti'))
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
 
     if nuovo_nome != f['nome']:
         _propaga_rinomina_flag(fid, f['nome'], nuovo_nome)
@@ -1842,7 +1905,7 @@ def crea_regola_conflitto():
 
     if not nome:
         return jsonify({'ok': False, 'errore': 'Nome obbligatorio.'}), 400
-    if tipo_regola not in ('tipo_vs_tipo', 'desiderata_mismatch', 'desiderata_assenza_mismatch'):
+    if tipo_regola not in TIPI_REGOLA:
         return jsonify({'ok': False, 'errore': 'tipo_regola non valido.'}), 400
 
     categoria = (dati.get('categoria') or 'consigliata').strip()

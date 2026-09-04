@@ -159,7 +159,8 @@ def e_senza_effetto(differenze):
 COLONNE = {
     'flag_turno': (
         'descrizione', 'orario_inizio', 'orario_fine', 'pausa_minuti',
-        'ore_primo_giorno', 'ore_ultimo_giorno', 'mostra_in_struttura', 'tipo',
+        'ore_primo_giorno', 'ore_ultimo_giorno', 'mostra_in_struttura',
+        'solo_su_richiesta', 'tipo',
     ),
     'tipi_qualitativo': ('descrizione', 'carico_lavoro'),
     'tipi_richiesta': ('descrizione', 'tipo', 'counting_flag', 'ore_default', 'ordine'),
@@ -215,7 +216,9 @@ def _applica_parte(db, tabella, chiave_nome, righe, colonne):
     Allinea una parte del vocabolario alla proposta, andando per nome.
 
     Le righe che il tenant ha in piu' restano dove sono: accettare una
-    proposta non cancella niente.
+    proposta non cancella niente. Nemmeno le colonne: una proposta che di un
+    campo non parla lo lascia com'e', cosi' una proposta piu' vecchia del
+    campo non lo azzera passando.
 
     Args:
         db: connessione al tenant.
@@ -235,15 +238,19 @@ def _applica_parte(db, tabella, chiave_nome, righe, colonne):
         if not nome:
             continue
 
-        valori = [riga.get(c) for c in colonne]
+        presenti = tuple(c for c in colonne if c in riga)
+        valori = [riga[c] for c in presenti]
+
         if nome in esistenti:
-            assegnazioni = ', '.join(f'{c} = ?' for c in colonne)
+            if not presenti:
+                continue
+            assegnazioni = ', '.join(f'{c} = ?' for c in presenti)
             db.execute(f'UPDATE {tabella} SET {assegnazioni} WHERE id = ?',
                        valori + [esistenti[nome]])
             aggiornate += 1
         else:
-            elenco = ', '.join((chiave_nome,) + colonne)
-            segnaposto = ', '.join('?' * (len(colonne) + 1))
+            elenco = ', '.join((chiave_nome,) + presenti)
+            segnaposto = ', '.join('?' * (len(presenti) + 1))
             db.execute(f'INSERT INTO {tabella} ({elenco}) VALUES ({segnaposto})',
                        [nome] + valori)
             aggiunte += 1

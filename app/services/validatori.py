@@ -8,6 +8,8 @@ tipo_regola:
   - tipo_vs_tipo: conflitto turno A vs turno B (flag-based)
   - desiderata_mismatch: flag richiesto ≠ flag assegnato
   - desiderata_assenza_mismatch: assegnato con richiesta assenza
+  - desiderata_composizione_parziale: al lavoratore e' arrivato un pezzo
+    della fascia che aveva chiesto, e ne mancano altri
 
 valida_assegnazione() restituisce:
   - conflitti: lista di dict con id regola, severità, blocca_inserimento
@@ -20,7 +22,43 @@ get_disponibili() restituisce lista lavoratori con i loro conflitti.
 import json
 
 from app.db import query_one, query_all
-from app.services.fasce_orarie import carica_mappa_flag, catena_antenati
+from app.services.fasce_orarie import (
+    COPERTURA_MATCH, COPERTURA_MISMATCH, COPERTURA_PARZIALE,
+    carica_mappa_flag, catena_antenati, copertura_richiesta
+)
+
+
+# ---------------------------------------------------------------------------
+# Tipi di regola
+# ---------------------------------------------------------------------------
+
+# Il codice li cerca per nome nella colonna regole_conflitto.tipo_regola:
+# sono l'interfaccia fra la tabella e chi la interroga.
+TIPO_REGOLA_TIPO_VS_TIPO = 'tipo_vs_tipo'
+TIPO_REGOLA_DESIDERATA_MISMATCH = 'desiderata_mismatch'
+TIPO_REGOLA_DESIDERATA_ASSENZA = 'desiderata_assenza_mismatch'
+TIPO_REGOLA_COMPOSIZIONE_PARZIALE = 'desiderata_composizione_parziale'
+
+TIPI_REGOLA = (
+    TIPO_REGOLA_TIPO_VS_TIPO,
+    TIPO_REGOLA_DESIDERATA_MISMATCH,
+    TIPO_REGOLA_DESIDERATA_ASSENZA,
+    TIPO_REGOLA_COMPOSIZIONE_PARZIALE,
+)
+
+# Le regole che guardano il desiderata del lavoratore, non gli altri turni.
+TIPI_REGOLA_DESIDERATA = (
+    TIPO_REGOLA_DESIDERATA_MISMATCH,
+    TIPO_REGOLA_DESIDERATA_ASSENZA,
+    TIPO_REGOLA_COMPOSIZIONE_PARZIALE,
+)
+
+# Aspetto e gravita' di serie della regola sul parziale: un avviso tenue,
+# perche' una composizione a meta' non e' un errore.
+STILE_COMPOSIZIONE_PARZIALE = (
+    '{"backgroundColor":"#e3f2fd","color":"#1565c0","fontStyle":"italic"}'
+)
+PESO_COMPOSIZIONE_PARZIALE = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +308,7 @@ def _valuta_tipo_vs_tipo(regole, flag_nuovo, ass_lista, mappa_flag, bidirezional
     """
     conflitti = []
     for r in regole:
-        if r['tipo_regola'] != 'tipo_vs_tipo':
+        if r['tipo_regola'] != TIPO_REGOLA_TIPO_VS_TIPO:
             continue
         for a in ass_lista:
             flag_esistente = a.get('flag_nome')
@@ -288,9 +326,21 @@ def _valuta_tipo_vs_tipo(regole, flag_nuovo, ass_lista, mappa_flag, bidirezional
     return conflitti
 
 
-def _valuta_desiderata(regole, flag_turno, des_ref, mappa_flag):
+def _valuta_desiderata(regole, flag_turno, des_ref, mappa_flag, altri_flag=None):
     """
-    Valuta regole desiderata (mismatch e notworking_mismatch).
+    Valuta le regole che guardano il desiderata del lavoratore.
+
+    Args:
+        regole (list): regole attive di tipo desiderata.
+        flag_turno (str|None): fascia del turno che si sta valutando.
+        des_ref (dict|None): richiesta del lavoratore per quel giorno.
+        mappa_flag (dict): gerarchia in vigore.
+        altri_flag (iterable|None): fasce gia' assegnate allo stesso
+                                    lavoratore nello stesso giorno, che
+                                    possono completare una composizione.
+
+    Returns:
+        list[dict]: regole attivate.
     """
     conflitti = []
     if not des_ref or not des_ref.get('tipo_richiesta_id'):
@@ -299,8 +349,16 @@ def _valuta_desiderata(regole, flag_turno, des_ref, mappa_flag):
     req_tipo = des_ref.get('req_tipo')
     req_flag_nome = des_ref.get('req_flag_nome')
 
+    # La copertura si calcola una volta sola: le due regole sul lavorativo
+    # sono due esiti della stessa domanda.
+    copertura = None
+    if req_tipo == 'lavorativo' and req_flag_nome and flag_turno:
+        copertura = copertura_richiesta(
+            flag_turno, des_ref.get('req_flag_id'), mappa_flag, altri_flag
+        )
+
     for r in regole:
-        if r['tipo_regola'] == 'desiderata_assenza_mismatch':
+        if r['tipo_regola'] == TIPO_REGOLA_DESIDERATA_ASSENZA:
             # Attiva se il lavoratore ha un desiderata assenza
             if req_tipo == 'assenza':
                 # Verifica che il flag del desiderata matchi flag_a della regola
@@ -308,11 +366,16 @@ def _valuta_desiderata(regole, flag_turno, des_ref, mappa_flag):
                 if r.get('flag_a_id') is None or _flag_matcha(req_flag_id, r.get('flag_a_id'), mappa_flag):
                     conflitti.append(_conflitto_da_regola(r))
 
-        elif r['tipo_regola'] == 'desiderata_mismatch':
-            # Attiva se il flag del desiderata non corrisponde al flag del turno
-            if req_tipo == 'lavorativo' and req_flag_nome and flag_turno:
-                if not _flag_nome_matcha(flag_turno, des_ref.get('req_flag_id'), mappa_flag):
-                    conflitti.append(_conflitto_da_regola(r))
+        elif r['tipo_regola'] == TIPO_REGOLA_DESIDERATA_MISMATCH:
+            # Attiva se il turno e' un'altra cosa rispetto a quello chiesto.
+            # Un pezzo di composizione non lo e': quello ha una regola sua.
+            if copertura == COPERTURA_MISMATCH:
+                conflitti.append(_conflitto_da_regola(r))
+
+        elif r['tipo_regola'] == TIPO_REGOLA_COMPOSIZIONE_PARZIALE:
+            # Attiva finche' la composizione e' incompleta.
+            if copertura == COPERTURA_PARZIALE:
+                conflitti.append(_conflitto_da_regola(r))
 
     return conflitti
 
@@ -368,21 +431,26 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
             'tipo_regola': 'turno_chiuso',
         })
 
-    # ── Regole desiderata ──
-    des_ref = _get_desiderata_ref(calendario_id, user_id, giorno)
-    regole_des = [r for r in regole if r['tipo_regola'] in
-                  ('desiderata_mismatch', 'desiderata_assenza_mismatch')]
-    conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref, mappa_flag))
-
-    # ── Regole tipo_vs_tipo offset=0 (stesso giorno) ──
+    # Gli altri turni dello stesso giorno servono due volte: alle regole
+    # tipo_vs_tipo e alla composizione, che si completa fra piu' celle.
     ass_oggi = [a for a in _get_assegnazioni_utente_giorno(calendario_id, user_id, giorno)
                 if a['turno_id'] != turno_id]
-    regole_0 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 0]
+
+    # ── Regole desiderata ──
+    des_ref = _get_desiderata_ref(calendario_id, user_id, giorno)
+    regole_des = [r for r in regole if r['tipo_regola'] in TIPI_REGOLA_DESIDERATA]
+    conflitti.extend(_valuta_desiderata(
+        regole_des, flag_nuovo, des_ref, mappa_flag,
+        altri_flag=[a.get('flag_nome') for a in ass_oggi]
+    ))
+
+    # ── Regole tipo_vs_tipo offset=0 (stesso giorno) ──
+    regole_0 = [r for r in regole if r['tipo_regola'] == TIPO_REGOLA_TIPO_VS_TIPO and r['offset_giorni'] == 0]
     conflitti.extend(_valuta_tipo_vs_tipo(regole_0, flag_nuovo, ass_oggi, mappa_flag))
 
     # ── Regole tipo_vs_tipo offset=1 (turno nuovo oggi=A, esistente domani=B) ──
     ass_domani = _get_assegnazioni_utente_giorno(calendario_id, user_id, giorno + 1)
-    regole_1 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 1]
+    regole_1 = [r for r in regole if r['tipo_regola'] == TIPO_REGOLA_TIPO_VS_TIPO and r['offset_giorni'] == 1]
     conflitti.extend(_valuta_tipo_vs_tipo(regole_1, flag_nuovo, ass_domani, mappa_flag, bidirezionale=False))
 
     # ── Reverse: se ieri c'è un turno con regola offset=1, oggi è il "giorno dopo" ──
@@ -412,7 +480,7 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
 
     # avviso_domani: ci sono regole offset=1 che coinvolgono il flag di questo turno?
     avviso_domani = any(
-        r['tipo_regola'] == 'tipo_vs_tipo'
+        r['tipo_regola'] == TIPO_REGOLA_TIPO_VS_TIPO
         and r['offset_giorni'] == 1
         and _flag_nome_matcha(flag_nuovo, r.get('flag_a_id'), mappa_flag)
         for r in regole
@@ -429,7 +497,8 @@ def valida_assegnazione(calendario_id, turno_id, user_id, giorno,
 # Calcolo codice colore cella (working desiderata)
 # ---------------------------------------------------------------------------
 
-def calcola_conflitto_wd(working_desiderata, flag_nome=None, mappa_flag=None):
+def calcola_conflitto_wd(working_desiderata, flag_nome=None, mappa_flag=None,
+                         altri_flag=None):
     """
     Il codice colore di una cella rispetto al desiderata del lavoratore.
 
@@ -439,9 +508,12 @@ def calcola_conflitto_wd(working_desiderata, flag_nome=None, mappa_flag=None):
         mappa_flag (dict|None): gerarchia in vigore; senza, si usa quella
                                 corrente, che e' il caso dei chiamanti che non
                                 partono da un calendario.
+        altri_flag (iterable|None): fasce gia' assegnate allo stesso lavoratore
+                                    nello stesso giorno, che possono completare
+                                    una composizione.
 
     Returns:
-        str: 'free', 'forced', 'match' o 'mismatch'.
+        str: 'free', 'forced', 'match', 'parziale' o 'mismatch'.
     """
     if not working_desiderata or not working_desiderata.get('tipo_richiesta_id'):
         return 'free'
@@ -455,11 +527,9 @@ def calcola_conflitto_wd(working_desiderata, flag_nome=None, mappa_flag=None):
     if req_flag_id and flag_nome:
         if mappa_flag is None:
             mappa_flag = carica_mappa_flag()
-        if _flag_nome_matcha(flag_nome, req_flag_id, mappa_flag):
-            return 'match'
-        return 'mismatch'
+        return copertura_richiesta(flag_nome, req_flag_id, mappa_flag, altri_flag)
 
-    return 'match'
+    return COPERTURA_MATCH
 
 
 def calcola_conflitto(flag_nome, working_desiderata, forzato, mappa_flag=None):
@@ -516,21 +586,26 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
                 'tipo_regola': 'turno_chiuso',
             })
 
+        # I turni che il lavoratore ha gia' quel giorno: servono alle regole
+        # tipo_vs_tipo e alla composizione, che si completa fra piu' celle.
+        ass_oggi = _get_assegnazioni_utente_giorno(calendario_id, uid, giorno)
+        flag_oggi = [a.get('flag_nome') for a in ass_oggi]
+
         # Regole desiderata
         des_ref = _get_desiderata_ref(calendario_id, uid, giorno)
         regole_des = [r for r in regole if r['tipo_regola'] in
-                      ('desiderata_mismatch', 'desiderata_assenza_mismatch')]
-        conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref, mappa_flag))
+                      TIPI_REGOLA_DESIDERATA]
+        conflitti.extend(_valuta_desiderata(regole_des, flag_nuovo, des_ref,
+                                            mappa_flag, altri_flag=flag_oggi))
 
         # Stesso giorno (offset=0)
-        ass_oggi = _get_assegnazioni_utente_giorno(calendario_id, uid, giorno)
-        regole_0 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 0]
+        regole_0 = [r for r in regole if r['tipo_regola'] == TIPO_REGOLA_TIPO_VS_TIPO and r['offset_giorni'] == 0]
         conflitti.extend(_valuta_tipo_vs_tipo(regole_0, flag_nuovo, ass_oggi, mappa_flag))
 
         # Giorno precedente → regole offset=1 (ieri=A, oggi=B)
         if giorno > 1:
             ass_ieri = _get_assegnazioni_utente_giorno(calendario_id, uid, giorno - 1)
-            regole_1 = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 1]
+            regole_1 = [r for r in regole if r['tipo_regola'] == TIPO_REGOLA_TIPO_VS_TIPO and r['offset_giorni'] == 1]
             for r in regole_1:
                 for a in ass_ieri:
                     flag_ieri = a.get('flag_nome')
@@ -541,7 +616,7 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
 
         # Giorno successivo (offset=1)
         ass_domani = _get_assegnazioni_utente_giorno(calendario_id, uid, giorno + 1)
-        regole_1_fwd = [r for r in regole if r['tipo_regola'] == 'tipo_vs_tipo' and r['offset_giorni'] == 1]
+        regole_1_fwd = [r for r in regole if r['tipo_regola'] == TIPO_REGOLA_TIPO_VS_TIPO and r['offset_giorni'] == 1]
         conflitti.extend(_valuta_tipo_vs_tipo(regole_1_fwd, flag_nuovo, ass_domani, mappa_flag))
 
         # Deduplica
@@ -554,7 +629,7 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
 
         # Working desiderata per stato colore cella
         wd = _get_working_desiderata(calendario_id, uid, giorno)
-        stato_wd = calcola_conflitto_wd(wd, flag_nuovo)
+        stato_wd = calcola_conflitto_wd(wd, flag_nuovo, mappa_flag, flag_oggi)
 
         # Bloccato da regola?
         bloccato = any(c['blocca_inserimento'] for c in conflitti_unici)
@@ -566,10 +641,13 @@ def get_disponibili(calendario_id, turno_id, giorno, ignora_notte=False):
         elif conflitti_unici:
             priorita = 3
             label = f'⚠ {sigla}'
-        elif stato_wd == 'match':
+        elif stato_wd == COPERTURA_MATCH:
             priorita = 1
             label = f'★ {sigla}'
-        elif stato_wd in ('mismatch', 'forced'):
+        elif stato_wd == COPERTURA_PARZIALE:
+            priorita = 1
+            label = f'☆ {sigla}'
+        elif stato_wd in (COPERTURA_MISMATCH, 'forced'):
             priorita = 2
             label = f'≠ {sigla}'
         else:

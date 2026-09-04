@@ -27,6 +27,10 @@ from app.db import close_db, init_db, get_master_db
 from app.services.fasce_orarie import (
     DURATA_TURNO_TIPO_DEFAULT_MINUTI, PAUSA_DEFAULT_MINUTI, ricalcola_tutte
 )
+from app.services.validatori import (
+    PESO_COMPOSIZIONE_PARZIALE, STILE_COMPOSIZIONE_PARZIALE,
+    TIPO_REGOLA_COMPOSIZIONE_PARZIALE
+)
 
 log = logging.getLogger(__name__)
 
@@ -815,6 +819,11 @@ def _migra_flag_e_regole(db):
     except Exception as e:
         log.warning('Check regole_conflitto fallito: %s', e)
 
+    # 2b. Il pezzo mancante di una composizione e' un tipo di regola nuovo:
+    # prima si allarga il vincolo, poi si inserisce la regola.
+    _estendi_tipi_regola(db)
+    _inserisci_regola_composizione_parziale(db)
+
     # 3. Migra max_notti_mese → vincoli_solver
     try:
         tables = [r[0] for r in db.execute(
@@ -885,6 +894,94 @@ def _inserisci_regole_default_nuove(db):
         db.commit()
     except Exception as e:
         log.warning('Inserimento regole default fallito: %s', e)
+
+
+def _estendi_tipi_regola(db):
+    """
+    Allarga il CHECK su regole_conflitto.tipo_regola al parziale di una
+    composizione.
+
+    Nuova feature. SQLite non modifica un vincolo CHECK: la tabella si
+    ricostruisce e i dati si travasano. Nessun'altra tabella la referenzia,
+    quindi bastano creazione, copia e rinomina.
+
+    Idempotente: se il vincolo nomina gia' il tipo nuovo, non fa nulla.
+    """
+    try:
+        riga = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='regole_conflitto'"
+        ).fetchone()
+        if not riga or TIPO_REGOLA_COMPOSIZIONE_PARZIALE in (riga[0] or ''):
+            return
+
+        db.execute("""
+            CREATE TABLE regole_conflitto_nuova (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome                TEXT    NOT NULL,
+                tipo_regola         TEXT    NOT NULL CHECK(tipo_regola IN (
+                                        'tipo_vs_tipo',
+                                        'desiderata_mismatch',
+                                        'desiderata_assenza_mismatch',
+                                        'desiderata_composizione_parziale'
+                                    )),
+                flag_a_id           INTEGER REFERENCES flag_turno(id),
+                flag_b_id           INTEGER REFERENCES flag_turno(id),
+                offset_giorni       INTEGER NOT NULL DEFAULT 0,
+                categoria           TEXT    NOT NULL DEFAULT 'consigliata',
+                stile               TEXT    NOT NULL DEFAULT '{"backgroundColor":"#fff3cd","color":"#856404"}',
+                blocca_inserimento  INTEGER NOT NULL DEFAULT 0,
+                peso_numerico       REAL    NOT NULL DEFAULT 1.0,
+                is_active           INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        db.execute(
+            "INSERT INTO regole_conflitto_nuova "
+            "(id, nome, tipo_regola, flag_a_id, flag_b_id, offset_giorni, "
+            " categoria, stile, blocca_inserimento, peso_numerico, is_active) "
+            "SELECT id, nome, tipo_regola, flag_a_id, flag_b_id, offset_giorni, "
+            "       categoria, stile, blocca_inserimento, peso_numerico, is_active "
+            "FROM regole_conflitto"
+        )
+        db.execute("DROP TABLE regole_conflitto")
+        db.execute("ALTER TABLE regole_conflitto_nuova RENAME TO regole_conflitto")
+        db.commit()
+        log.info('regole_conflitto: tipo_regola accetta il parziale di una composizione')
+    except Exception as e:
+        db.rollback()
+        log.warning('Estensione dei tipi regola fallita: %s', e)
+
+
+def _inserisci_regola_composizione_parziale(db):
+    """
+    Inserisce la regola che segnala una composizione ancora incompleta.
+
+    Nuova feature. Chi chiede la lunga e ha ricevuto solo la mattina non e' in
+    errore: gli manca un pezzo. La regola lo dice con un colore suo, non
+    blocca l'inserimento e sparisce da sola quando il pezzo arriva.
+
+    Idempotente: una sola regola di questo tipo, comunque rinominata.
+    """
+    try:
+        esistente = db.execute(
+            "SELECT id FROM regole_conflitto WHERE tipo_regola=?",
+            (TIPO_REGOLA_COMPOSIZIONE_PARZIALE,)
+        ).fetchone()
+        if esistente:
+            return
+
+        db.execute(
+            "INSERT INTO regole_conflitto "
+            "(nome, tipo_regola, flag_a_id, flag_b_id, offset_giorni, "
+            " categoria, stile, blocca_inserimento, peso_numerico) "
+            "VALUES (?,?,NULL,NULL,0,?,?,0,?)",
+            ('Composizione incompleta', TIPO_REGOLA_COMPOSIZIONE_PARZIALE,
+             'facoltativa', STILE_COMPOSIZIONE_PARZIALE, PESO_COMPOSIZIONE_PARZIALE)
+        )
+        db.commit()
+        log.info('Inserita la regola "Composizione incompleta"')
+    except Exception as e:
+        db.rollback()
+        log.warning('Inserimento della regola composizione parziale fallito: %s', e)
 
 
 def _pulisci_style_history(db):

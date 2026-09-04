@@ -22,7 +22,10 @@ DEBUG_ACTIVE = False
 
 from app.db import query_one, query_all, execute_write
 from app.services.validatori import valida_assegnazione, _flag_matcha
-from app.services.fasce_orarie import carica_mappa_flag
+from app.services.fasce_orarie import (
+    COPERTURA_MISMATCH, carica_mappa_flag, copertura_richiesta,
+    solo_su_richiesta
+)
 from app.services.history import aggiungi_step
 from app.services.config_snapshot import (
     carica_config_snapshot,
@@ -698,7 +701,10 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
     Returns:
         bloccato (bool)
     """
-    from app.services.validatori import _flag_nome_matcha
+    from app.services.validatori import (
+        TIPO_REGOLA_DESIDERATA_ASSENZA, TIPO_REGOLA_DESIDERATA_MISMATCH,
+        TIPO_REGOLA_TIPO_VS_TIPO, _flag_nome_matcha
+    )
 
     # Filtra regole disattivate nello snapshot (is_active) e quelle escluse a monte
     regole_attive = [
@@ -706,21 +712,30 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
         if r.get('is_active', 1) and (not escludi_regole or r.get('id') not in escludi_regole)
     ]
 
+    ass_oggi = ass_utente_giorno.get((uid, giorno), [])
+
     # Desiderata ref
     des_ref = des_ref_map.get((uid, giorno))
     if des_ref and des_ref.get('req_tipo'):
         req_tipo = des_ref.get('req_tipo')
         for r in regole_attive:
-            if r.get('tipo_regola') == 'desiderata_assenza_mismatch' and req_tipo == 'assenza':
+            if r.get('tipo_regola') == TIPO_REGOLA_DESIDERATA_ASSENZA and req_tipo == 'assenza':
                 return True
-            elif r.get('tipo_regola') == 'desiderata_mismatch':
+            elif r.get('tipo_regola') == TIPO_REGOLA_DESIDERATA_MISMATCH:
                 if req_tipo == 'lavorativo' and des_ref.get('req_flag_nome') and flag_nome_nuovo:
-                    if not _flag_nome_matcha(flag_nome_nuovo, des_ref.get('req_flag_id'), flag_map):
+                    # Un pezzo di composizione non e' un mismatch: se lo fosse,
+                    # il riempimento scarterebbe la mattina di chi ha chiesto la
+                    # lunga e la composizione non si formerebbe mai. Il parziale
+                    # ha una regola sua, che qui non blocca nulla.
+                    copertura = copertura_richiesta(
+                        flag_nome_nuovo, des_ref.get('req_flag_id'), flag_map,
+                        [a.get('flag_nome') for a in ass_oggi]
+                    )
+                    if copertura == COPERTURA_MISMATCH:
                         return True
 
     # tipo_vs_tipo offset=0 (stesso giorno)
-    ass_oggi = ass_utente_giorno.get((uid, giorno), [])
-    regole_0 = [r for r in regole_attive if r.get('tipo_regola') == 'tipo_vs_tipo' and r.get('offset_giorni', 0) == 0]
+    regole_0 = [r for r in regole_attive if r.get('tipo_regola') == TIPO_REGOLA_TIPO_VS_TIPO and r.get('offset_giorni', 0) == 0]
     for r in regole_0:
         for a in ass_oggi:
             flag_e = a.get('flag_nome')
@@ -732,7 +747,7 @@ def _valida_conflitti_inmem(regole, flag_nome_nuovo, flag_id_nuovo,
                 return True
 
     # tipo_vs_tipo offset=1 (oggi=A, domani=B) — turno nuovo oggi, esistente domani
-    regole_1 = [r for r in regole_attive if r.get('tipo_regola') == 'tipo_vs_tipo' and r.get('offset_giorni') == 1]
+    regole_1 = [r for r in regole_attive if r.get('tipo_regola') == TIPO_REGOLA_TIPO_VS_TIPO and r.get('offset_giorni') == 1]
     ass_domani = ass_utente_giorno.get((uid, giorno + 1), [])
     for r in regole_1:
         for a in ass_domani:
@@ -830,6 +845,10 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
         is_festivo = giorno_tipo.get(giorno, 'normale') in ('festivo', 'superfestivo')
         flag_antenati = _calcola_antenati_flag(flag_id, flag_map) if flag_id else set()
 
+        # La fascia riservata alle richieste non si propone da se': il
+        # riempimento la mette solo dove il lavoratore l'ha chiesta.
+        cella_su_richiesta = solo_su_richiesta(flag_id, flag_map)
+
         # --- FASE 2: Filtro hard ---
         candidati = []
 
@@ -840,6 +859,17 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
             # HARD: indisponibilita' (assenza + esclusioni manuali)
             if giorno in indisponibilita and uid in indisponibilita[giorno]:
                 continue
+
+            # HARD: fascia solo su richiesta. Vale anche il pezzo di una
+            # composizione: chi ha chiesto la lunga puo' ricevere la mattina.
+            if cella_su_richiesta:
+                wd_cella = wd_map.get((uid, giorno))
+                if not wd_cella or wd_cella.get('req_tipo') != 'lavorativo':
+                    continue
+                if copertura_richiesta(
+                    flag_nome, wd_cella.get('req_flag_id'), flag_map
+                ) == COPERTURA_MISMATCH:
+                    continue
 
             # HARD: max turni/giorno
             max_turni_g = _get_vincolo(vincoli_g, vincoli_utente_cache, uid, 'max_turni_giorno')

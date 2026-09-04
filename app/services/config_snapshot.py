@@ -12,8 +12,10 @@ Contenuto del JSON config_snapshot:
 - accesso_utenti: [{manager_id, user_id}]
 - flag_turno: [{id, nome, parent_id, peso_turno, ore_turno,
                  ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura,
-                 orario_inizio, orario_fine, pausa_minuti,
+                 solo_su_richiesta, orario_inizio, orario_fine, pausa_minuti,
                  durata_netta_minuti, durata_totale_minuti, tipo}]
+- flag_composizione: [{flag_id, componente_flag_id}] — quali fasce insieme
+                 soddisfano la richiesta di un'altra
 - tipi_qualitativo: [{id, nome, descrizione, carico_lavoro}]  (*)
 - tipi_richiesta: [{id, sigla, descrizione, tipo, counting_flag, flag_id,
                     ore_default, ordine}]
@@ -36,6 +38,7 @@ Solver e optimizer li leggono direttamente dal record calendario.
 import json
 
 from app.db import query_all, query_one
+from app.services.fasce_orarie import costruisci_mappa_flag
 from app.services.validatori import snapshot_regole
 
 # Valori di default per l'appearance di un preset struttura
@@ -117,9 +120,16 @@ def crea_config_snapshot(preset_id=None):
             dict(r) for r in query_all(
                 "SELECT id, nome, parent_id, peso_turno, ore_turno, "
                 "ore_primo_giorno, ore_ultimo_giorno, mostra_in_struttura, "
-                "tipo, orario_inizio, orario_fine, pausa_minuti, "
-                "durata_netta_minuti, durata_totale_minuti "
+                "solo_su_richiesta, tipo, orario_inizio, orario_fine, "
+                "pausa_minuti, durata_netta_minuti, durata_totale_minuti "
                 "FROM flag_turno"
+            )
+        ],
+        # Da quali fasce e' soddisfatta la richiesta di un'altra. Serve solo a
+        # questo: peso e ore restano derivati dagli orari.
+        'flag_composizione': [
+            dict(r) for r in query_all(
+                "SELECT flag_id, componente_flag_id FROM flag_composizione"
             )
         ],
         'tipi_qualitativo': [
@@ -333,13 +343,18 @@ def snap_tipi_richiesta(snap):
 
 
 def snap_flag_map(snap):
-    """Ritorna dict flag_id→{parent_id, nome, ...} per risalita gerarchia."""
+    """
+    Ritorna dict flag_id→{parent_id, nome, componenti, ...} per risalita
+    gerarchia. La composizione arriva con la mappa: il solver la interroga
+    insieme alla discendenza, e non deve tornare al database per averla.
+    """
     if not snap:
         return {}
-    fmap = {}
-    for f in snap.get('flag_turno', []):
-        fmap[f['id']] = f
-    return fmap
+
+    return costruisci_mappa_flag(
+        snap.get('flag_turno', []),
+        snap.get('flag_composizione')
+    )
 
 
 def snap_accesso_turni(snap):

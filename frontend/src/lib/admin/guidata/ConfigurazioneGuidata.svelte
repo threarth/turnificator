@@ -33,9 +33,9 @@
     import { focusOnMount } from '../actions.js';
     import DeleteButton from '../DeleteButton.svelte';
     import VincoliSolver from '../VincoliSolver.svelte';
-    import { minToHm } from '../durate.js';
     import { costruisciStruttura, nomeDuplicato } from '../struttura.js';
     import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
+    import SezioneFasce from './SezioneFasce.svelte';
     import SezioneTipologie from './SezioneTipologie.svelte';
     import SezioneConteggi from './SezioneConteggi.svelte';
     import SezioneUtenti from './SezioneUtenti.svelte';
@@ -64,9 +64,6 @@
     export let onvocabolarioaggiornato;
     export let onregoleaggiornate;
     export let onconfigaggiornata;
-
-    // Pausa obbligatoria di default, in minuti.
-    const PAUSA_DEFAULT_MINUTI = 10;
 
     // Nomi comuni per la struttura, con il loro plurale gia' corretto:
     // sceglierli da un elenco evita di doverlo indovinare dal singolare.
@@ -104,12 +101,6 @@
     // Etichetta personalizzata: attiva quando nessun suggerimento va bene.
     let etichettaLibera = false;
 
-    // Passo 1 — form di creazione di una fascia nuova.
-    let nuovaFascia = fasciaVuota();
-
-    // Orari in corso di modifica, per id fascia: { orario_inizio, orario_fine, pausa_minuti }.
-    let modificheFasce = {};
-
     // Passo 2 e 3 — il modello del wizard e' piatto: struttura → turni.
     // I gruppi non esistono qui, li materializza costruisciStruttura().
     let strutture = [struttureVuota()];
@@ -122,13 +113,6 @@
     function idTemporaneo() {
         contatoreId += 1;
         return `w${contatoreId}`;
-    }
-
-    function fasciaVuota() {
-        return {
-            nome: '', parent_id: null,
-            orario_inizio: '', orario_fine: '', pausa_minuti: PAUSA_DEFAULT_MINUTI,
-        };
     }
 
     function struttureVuota() {
@@ -151,52 +135,6 @@
     $: fasceDisponibili = fasce
         .filter(f => f.mostra_in_struttura)
         .sort((a, b) => (a.orario_inizio || '').localeCompare(b.orario_inizio || ''));
-
-    $: if (!nuovaFascia.parent_id && concetti.length) {
-        nuovaFascia.parent_id = concetti[0].id;
-    }
-
-    // ── Passo 1: fasce orarie ────────────────────────────────────────────
-
-    /** Una fascia e' pronta se ha nome, categoria ed entrambi gli orari. */
-    $: nuovaFasciaCompleta = nuovaFascia.nome.trim()
-        && nuovaFascia.parent_id
-        && nuovaFascia.orario_inizio.trim()
-        && nuovaFascia.orario_fine.trim();
-
-    async function aggiungiFascia() {
-        if (!nuovaFasciaCompleta) return;
-
-        errore = '';
-        const r = await adminApi.creaFlagTurno({ ...nuovaFascia, tipo: 'lavorativo' });
-        if (!r.ok) { errore = r.errore || 'Creazione della fascia non riuscita.'; return; }
-
-        nuovaFascia = fasciaVuota();
-        await onfasceaggiornate();
-    }
-
-    /** Registra la modifica di un orario senza salvarla: serve il pulsante. */
-    function modificaFascia(fascia, campo, valore) {
-        const corrente = modificheFasce[fascia.id] ?? {
-            orario_inizio: fascia.orario_inizio ?? '',
-            orario_fine: fascia.orario_fine ?? '',
-            pausa_minuti: fascia.pausa_minuti ?? PAUSA_DEFAULT_MINUTI,
-        };
-        modificheFasce = { ...modificheFasce, [fascia.id]: { ...corrente, [campo]: valore } };
-    }
-
-    async function salvaFascia(fascia) {
-        const modifica = modificheFasce[fascia.id];
-        if (!modifica) return;
-
-        errore = '';
-        const r = await adminApi.editFlagTurno(fascia.id, modifica);
-        if (!r.ok) { errore = r.errore || 'Modifica della fascia non riuscita.'; return; }
-
-        const { [fascia.id]: _rimossa, ...resto } = modificheFasce;
-        modificheFasce = resto;
-        await onfasceaggiornate();
-    }
 
     // ── Passo 2: le strutture ────────────────────────────────────────────
 
@@ -408,102 +346,8 @@
 
         <!-- ═══ Fasce orarie ═══ -->
         {#if sezioneCorrente === 'fasce'}
-            <p class="guidata-intro">
-                Una fascia oraria è l'orario di un turno: da che ora a che ora.
-                Bastano quelli — durata, ore e peso li ricava il programma da sé.
-            </p>
-
-            <section class="guidata-sezione">
-                <h6 class="guidata-titolo">Le fasce già disponibili</h6>
-                <p class="guidata-aiuto">
-                    Se un orario non corrisponde ai tuoi turni, correggilo qui.
-                    Le fasce sono in comune: la correzione vale per ogni struttura
-                    turni, non solo per quella che stai creando.
-                </p>
-
-                <table class="table table-sm align-middle mb-0">
-                    <thead><tr>
-                        <th style="width:150px">Fascia</th>
-                        <th style="width:120px">Categoria</th>
-                        <th style="width:100px">Inizio</th>
-                        <th style="width:100px">Fine</th>
-                        <th style="width:100px">Pausa (min)</th>
-                        <th style="width:90px">Durata</th>
-                        <th style="width:70px"></th>
-                    </tr></thead>
-                    <tbody>
-                        {#each fasceDisponibili as f (f.id)}
-                            {@const modifica = modificheFasce[f.id]}
-                            <tr class:table-warning={modifica}>
-                                <td class="fw-semibold">{f.nome}</td>
-                                <td class="small text-muted">{f.parent_nome || '—'}</td>
-                                <td><input class="form-control form-control-sm" aria-label="Inizio di {f.nome}"
-                                           value={modifica?.orario_inizio ?? f.orario_inizio ?? ''}
-                                           on:input={e => modificaFascia(f, 'orario_inizio', e.target.value)} /></td>
-                                <td><input class="form-control form-control-sm" aria-label="Fine di {f.nome}"
-                                           value={modifica?.orario_fine ?? f.orario_fine ?? ''}
-                                           on:input={e => modificaFascia(f, 'orario_fine', e.target.value)} /></td>
-                                <td><input class="form-control form-control-sm" type="number" min="0"
-                                           aria-label="Pausa di {f.nome}"
-                                           value={modifica?.pausa_minuti ?? f.pausa_minuti ?? 0}
-                                           on:input={e => modificaFascia(f, 'pausa_minuti', e.target.value)} /></td>
-                                <td class="small text-muted">{minToHm(f.durata_totale_minuti) || '—'}</td>
-                                <td>
-                                    {#if modifica}
-                                        <button class="btn btn-warning btn-sm py-0" on:click={() => salvaFascia(f)}>
-                                            Salva
-                                        </button>
-                                    {/if}
-                                </td>
-                            </tr>
-                        {/each}
-                    </tbody>
-                </table>
-            </section>
-
-            <section class="guidata-sezione guidata-inserimento">
-                <h6 class="guidata-titolo">Aggiungi una fascia</h6>
-                <div class="row g-3 align-items-end">
-                    <div class="col-auto" style="width:180px">
-                        <label class="form-label" for="fascia-nome">Nome</label>
-                        <input id="fascia-nome" class="form-control form-control-sm"
-                               placeholder="es. sera" bind:value={nuovaFascia.nome} />
-                    </div>
-                    <div class="col-auto" style="width:170px">
-                        <label class="form-label" for="fascia-categoria">Categoria</label>
-                        <select id="fascia-categoria" class="form-select form-select-sm" bind:value={nuovaFascia.parent_id}>
-                            {#each concetti as c}
-                                <option value={c.id}>{c.nome}</option>
-                            {/each}
-                        </select>
-                    </div>
-                    <div class="col-auto" style="width:110px">
-                        <label class="form-label" for="fascia-inizio">Inizio</label>
-                        <input id="fascia-inizio" class="form-control form-control-sm"
-                               placeholder="16:00" bind:value={nuovaFascia.orario_inizio} />
-                    </div>
-                    <div class="col-auto" style="width:110px">
-                        <label class="form-label" for="fascia-fine">Fine</label>
-                        <input id="fascia-fine" class="form-control form-control-sm"
-                               placeholder="22:20" bind:value={nuovaFascia.orario_fine} />
-                    </div>
-                    <div class="col-auto" style="width:110px">
-                        <label class="form-label" for="fascia-pausa">Pausa (min)</label>
-                        <input id="fascia-pausa" class="form-control form-control-sm" type="number" min="0"
-                               bind:value={nuovaFascia.pausa_minuti} />
-                    </div>
-                    <div class="col-auto">
-                        <button class="btn btn-primary btn-sm" disabled={!nuovaFasciaCompleta} on:click={aggiungiFascia}>
-                            Aggiungi la fascia
-                        </button>
-                    </div>
-                </div>
-                <p class="guidata-aiuto mt-2 mb-0">
-                    La categoria dice se la fascia è diurna, notturna o di guardia.
-                    Il programma la usa per applicare le regole da sé: dopo una
-                    notte, per esempio, il riposo del giorno dopo è obbligatorio.
-                </p>
-            </section>
+            <SezioneFasce fasce={fasceDisponibili} {concetti}
+                          onaggiornate={onfasceaggiornate} />
         {/if}
 
         <!-- ═══ Assenze e richieste ═══ -->

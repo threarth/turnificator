@@ -55,6 +55,12 @@ NOME_ROOT_GUARDIA = 'guardia_24h'
 # piu' di pochi livelli.
 PROFONDITA_MAX_GERARCHIA = 16
 
+# Esiti di copertura_richiesta(): quanto un turno assegnato soddisfa la
+# fascia che il lavoratore aveva chiesto.
+COPERTURA_MATCH = 'match'          # la richiesta e' soddisfatta
+COPERTURA_PARZIALE = 'parziale'    # e' un pezzo della richiesta, ne mancano altri
+COPERTURA_MISMATCH = 'mismatch'    # e' un'altra cosa
+
 
 class FormatoOrarioNonValido(ValueError):
     """Orario non esprimibile come 'HH:MM' con ore 0-24 e minuti 0-59."""
@@ -330,17 +336,33 @@ def ricalcola_tutte(db):
 # Gerarchia: appartenenza di una fascia a un concetto root
 # ---------------------------------------------------------------------------
 
-def costruisci_mappa_flag(righe):
+def costruisci_mappa_flag(righe, composizione=None):
     """
     Indicizza per id le righe flag, per le interrogazioni sulla gerarchia.
 
+    Ogni voce porta `componenti`: gli id delle fasce che, messe insieme,
+    soddisfano la richiesta di questa. Non dicono quanto vale la fascia —
+    durata, ore e peso restano derivati dagli orari.
+
     Args:
         righe (iterable): righe con almeno id, nome e parent_id.
+        composizione (iterable|None): righe flag_composizione, con
+                                      flag_id e componente_flag_id.
 
     Returns:
-        dict: { id → dict della riga }.
+        dict: { id → dict della riga, con `componenti` }.
     """
-    return {riga['id']: dict(riga) for riga in righe}
+    mappa = {riga['id']: dict(riga) for riga in righe}
+
+    for voce in mappa.values():
+        voce['componenti'] = []
+
+    for riga in (composizione or []):
+        voce = mappa.get(riga['flag_id'])
+        if voce is not None:
+            voce['componenti'].append(riga['componente_flag_id'])
+
+    return mappa
 
 
 def catena_antenati(flag_id, mappa_flag):
@@ -433,14 +455,113 @@ def carica_mappa_flag(config_snapshot=None):
         dict: mappa { id → flag }, eventualmente vuota.
     """
     if config_snapshot and config_snapshot.get('flag_turno'):
-        return costruisci_mappa_flag(config_snapshot['flag_turno'])
+        return costruisci_mappa_flag(
+            config_snapshot['flag_turno'],
+            config_snapshot.get('flag_composizione')
+        )
 
     # Import locale: cosi' la logica di calcolo resta usabile senza database.
     from app.db import query_all
 
     return costruisci_mappa_flag(
-        query_all("SELECT id, nome, parent_id FROM flag_turno", ())
+        query_all(
+            "SELECT id, nome, parent_id, solo_su_richiesta FROM flag_turno", ()
+        ),
+        query_all(
+            "SELECT flag_id, componente_flag_id FROM flag_composizione", ()
+        )
     )
+
+
+def id_da_nome(flag_nome, mappa_flag):
+    """
+    L'id della fascia che si chiama cosi', o None.
+
+    Gli snapshot dei calendari portano il nome del flag, non il suo id:
+    questa e' la traduzione che serve a rientrare nella gerarchia.
+
+    Args:
+        flag_nome (str|None): nome della fascia.
+        mappa_flag (dict): mappa prodotta da costruisci_mappa_flag().
+
+    Returns:
+        int|None: id della fascia, None se il nome non e' noto.
+    """
+    if not flag_nome:
+        return None
+
+    for flag_id, riga in mappa_flag.items():
+        if riga.get('nome') == flag_nome:
+            return flag_id
+
+    return None
+
+
+def solo_su_richiesta(flag_id, mappa_flag):
+    """
+    La fascia si mette solo dove il lavoratore l'ha chiesta?
+
+    Vale per discendenza: se il concetto e' riservato alle richieste, lo sono
+    anche le fasce che ne discendono.
+
+    Args:
+        flag_id (int|None): id della fascia da verificare.
+        mappa_flag (dict): mappa prodotta da costruisci_mappa_flag().
+
+    Returns:
+        bool: True se il riempimento automatico non puo' proporla da se'.
+    """
+    if flag_id is None:
+        return False
+
+    return any(
+        mappa_flag.get(antenato, {}).get('solo_su_richiesta')
+        for antenato in catena_antenati(flag_id, mappa_flag)
+    )
+
+
+def copertura_richiesta(flag_nome, req_flag_id, mappa_flag, altri_flag_nomi=None):
+    """
+    Quanto il turno assegnato soddisfa la fascia che il lavoratore ha chiesto.
+
+    Una fascia che discende dalla richiesta la soddisfa da sola. Altrimenti
+    entra in gioco la composizione: chi chiede la lunga puo' riceverla a
+    pezzi, ma la richiesta e' soddisfatta solo quando ci sono tutti — finche'
+    ne manca qualcuno la copertura e' parziale, che non e' un errore ma un
+    lavoro a meta'.
+
+    Args:
+        flag_nome (str|None): fascia del turno che si sta valutando.
+        req_flag_id (int|None): fascia richiesta; None non chiede nulla.
+        mappa_flag (dict): mappa prodotta da costruisci_mappa_flag().
+        altri_flag_nomi (iterable|None): fasce gia' assegnate allo stesso
+                                         lavoratore nello stesso giorno.
+
+    Returns:
+        str: COPERTURA_MATCH, COPERTURA_PARZIALE o COPERTURA_MISMATCH.
+    """
+    if req_flag_id is None:
+        return COPERTURA_MATCH
+
+    flag_id = id_da_nome(flag_nome, mappa_flag)
+    if flag_id is None:
+        return COPERTURA_MISMATCH
+
+    if req_flag_id in catena_antenati(flag_id, mappa_flag):
+        return COPERTURA_MATCH
+
+    componenti = set(mappa_flag.get(req_flag_id, {}).get('componenti') or [])
+    coperti_qui = componenti & catena_antenati(flag_id, mappa_flag)
+    if not coperti_qui:
+        return COPERTURA_MISMATCH
+
+    coperti = set(coperti_qui)
+    for altro in (altri_flag_nomi or []):
+        altro_id = id_da_nome(altro, mappa_flag)
+        if altro_id is not None:
+            coperti |= componenti & catena_antenati(altro_id, mappa_flag)
+
+    return COPERTURA_MATCH if coperti >= componenti else COPERTURA_PARZIALE
 
 
 def e_notturna(flag_nome, mappa_flag):

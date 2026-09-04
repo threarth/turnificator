@@ -6,41 +6,35 @@ voci qui sopra si rifanno sbagliate.
 
 ---
 
-## 1. Fasce «solo su richiesta» e composizione — interfaccia e solver
+## 1. Fasce «solo su richiesta» e composizione — ~~interfaccia e solver~~ fatto
 
-Database e API sono **già pronti** (commit `5356faa`):
+Fatto. Restano due code, in fondo a questa voce.
 
-- `flag_turno.solo_su_richiesta` — il solver non usa la fascia di sua
-  iniziativa, la mette solo dove il lavoratore l'ha chiesta. È il caso della
-  *lunga*.
-- `flag_composizione (flag_id, componente_flag_id)` — quali fasce insieme
-  soddisfano la richiesta di un'altra: chi chiede `L` può ricevere
-  `mattina` + `pomeriggio`.
-- `GET/POST/PUT /api/admin/flag-turno` leggono e scrivono entrambe;
-  la GET restituisce `componenti` come array di id.
+- **Interfaccia**: la sezione Fasce è uscita da `ConfigurazioneGuidata` ed è
+  `SezioneFasce.svelte`. Ha la casella «Su richiesta» per riga e, sotto la
+  riga, l'editor della composizione — impostabile, non derivata.
+- **API**: POST e PUT scrivono `componenti` (prima li leggeva solo la GET).
+  Una PUT che non ne parla lascia la composizione com'è.
+- **Snapshot**: `solo_su_richiesta` e `flag_composizione` sono nello snapshot
+  del calendario, e `snap_flag_map` li restituisce con la mappa.
+- **Solver**: filtro hard sulle fasce riservate; `copertura_richiesta()` in
+  `fasce_orarie.py` risponde `match` / `parziale` / `mismatch` ed è l'unico
+  punto dove la domanda si fa, usato da validatori, solver e colore cella.
 
-### Manca — interfaccia
+La semantica scelta — soddisfatta solo a composizione intera — sta fra le
+decisioni, in fondo.
 
-Nella sezione **Fasce orarie** della configurazione guidata
-(`ConfigurazioneGuidata.svelte`, blocco `sezioneCorrente === 'fasce'`, che è
-ancora inline nel file):
+### Code
 
-- casella **«Solo su richiesta»** per riga;
-- selezione delle fasce che la compongono — «la lunga è la somma di
-  mattina + pomeriggio». Va **impostabile**, non derivata: è stata una
-  richiesta esplicita.
-
-### Manca — solver
-
-1. **Solo su richiesta**: nel filtro hard delle celle
-   (`solver.py`, `_esegui_assegnazione`, dove si scartano i candidati), se la
-   fascia della cella ha `solo_su_richiesta` e il working desiderata del
-   candidato non chiede quella fascia, il candidato non è ammissibile.
-2. **Composizione**: la richiesta di `L` deve considerarsi soddisfatta se al
-   lavoratore vengono assegnate le fasce che la compongono. Tocca il
-   riconoscimento del mismatch — `_flag_nome_matcha` in `validatori.py` e la
-   copia in-memory in `solver.py::_valida_conflitti_inmem` — che oggi
-   confronta solo per discendenza, e `mattina` non discende da `lunga`.
+- **La composizione non si propone.** `solo_su_richiesta` viaggia con le
+  proposte del master, `flag_composizione` no: è una tabella di sole coppie di
+  id, senza nome, e il meccanismo delle proposte va per nome. Servirebbe una
+  parte a sé, che traduce le coppie in nomi e le ritraduce all'arrivo.
+- **Le funzioni lunghe si sono allungate.** `crea_config_snapshot`,
+  `valida_assegnazione`, `get_disponibili`, `modifica_flag_turno` e
+  `_migra_flag_e_regole` erano già oltre le 40 righe e hanno preso qualche
+  riga in più. Nessuna è stata spezzata: è una refattorizzazione da fare
+  apposta, non di straforo.
 
 ---
 
@@ -91,11 +85,10 @@ manager.
 - **Due convenzioni per il giorno della settimana**: `0 = lunedì` nel solver
   e in `calendario_giorni`, `0 = domenica` nei conteggi del context menu e
   nella pagina manager. Non è stata unificata: cambiarla tocca dati salvati.
-- **`ConfigurazioneGuidata.svelte` è sulle 900 righe.** Tipologie, assenze,
-  regole, giorni, conteggi, persone sono già componenti a sé; restano inline
-  le tre storiche — fasce, strutture, turni. Fasce è la più facile da
-  estrarre e non condivide stato; strutture e turni condividono l'array
-  `strutture` e vanno passate con `bind:`.
+- **`ConfigurazioneGuidata.svelte` è sulle 730 righe.** Tipologie, assenze,
+  regole, giorni, conteggi, persone e ora fasce sono componenti a sé.
+  Restano inline strutture e turni, che condividono l'array `strutture` e
+  vanno passate con `bind:`.
 - **I flag di serie stanno in due posti**: `migrations/init_db.sql` e
   `CONCETTI_ROOT` / `FASCE_DEFAULT` in `app/__init__.py`. Per i tipi
   richiesta la duplicazione è già stata tolta, per i flag no.
@@ -123,6 +116,16 @@ Durata, ore e peso restano derivati dagli orari e non si leggono mai da lì:
 era la confusione fra le due cose a renderla una fonte di divergenze la prima
 volta che è esistita. La migrazione `_rimuovi_colonna_entita` **non deve**
 cancellarla — lo faceva, e cancellava la tabella a ogni avvio.
+
+**Una composizione è soddisfatta solo quando è intera.** Chi ha chiesto la
+lunga e ha ricevuto la sola mattina non è in errore: gli manca un pezzo. Lo
+dice `desiderata_composizione_parziale`, un tipo di regola con stile e gravità
+configurabili come gli altri, che **non blocca** — se bloccasse, il
+riempimento scarterebbe quella mattina e la composizione non si formerebbe
+mai. Per lo stesso motivo l'optimizer la esclude dalle regole bloccanti.
+Sparisce da sé quando arriva il pezzo che manca, perché
+`_ricalcola_conflitti_vicini` rivaluta lo stesso lavoratore su ieri/oggi/domani
+a ogni salvataggio.
 
 **Tre nomi sono strutturali**: `turno_tipo`, `notturno`, `diurno`. Il codice
 li cerca per nome. `guardia_24h` non lo è.

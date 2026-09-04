@@ -17,6 +17,7 @@
            leggiEtichettaDaConfig, leggiEtichettaManager } from '$lib/etichette.js';
   import { decToHm, hmToDec, hmToMin, minToHm } from '$lib/admin/durate.js';
   import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
+  import { TIPI_REGOLA, etichettaBreve } from '$lib/regole.js';
   import AccessoDropdown from '$lib/admin/AccessoDropdown.svelte';
   import EditableTable from '$lib/admin/EditableTable.svelte';
   import StyleContextMenu from '$lib/StyleContextMenu.svelte';
@@ -2370,9 +2371,9 @@
             <div class="col-md-2">
               <label class="form-label small">Tipo regola</label>
               <select class="form-select form-select-sm" bind:value={nuovaRegola.tipo_regola}>
-                <option value="tipo_vs_tipo">Tipo vs Tipo</option>
-                <option value="desiderata_mismatch">Desiderata mismatch</option>
-                <option value="desiderata_assenza_mismatch">Assenza mismatch</option>
+                {#each TIPI_REGOLA as t}
+                  <option value={t.valore}>{t.esteso}</option>
+                {/each}
               </select>
             </div>
             {#if nuovaRegola.tipo_regola === 'tipo_vs_tipo'}
@@ -2444,9 +2445,9 @@
                 <td><input class="form-control form-control-sm" use:autoFocus={'nome'} bind:value={editingRegola.nome} style="width:140px" /></td>
                 <td>
                   <select class="form-select form-select-sm" use:autoFocus={'tipo_regola'} style="width:110px" bind:value={editingRegola.tipo_regola}>
-                    <option value="tipo_vs_tipo">tipo_vs_tipo</option>
-                    <option value="desiderata_mismatch">des. mismatch</option>
-                    <option value="desiderata_assenza_mismatch">assenza</option>
+                    {#each TIPI_REGOLA as t}
+                      <option value={t.valore}>{t.breve}</option>
+                    {/each}
                   </select>
                 </td>
                 <td>
@@ -2498,7 +2499,7 @@
               <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
               <tr class="editable-row {r.is_active ? '' : 'text-muted'}" on:click={e => startEditFromRow(e, () => editingRegola = {...r})}>
                 <td class="fw-semibold" data-field="nome">{r.nome}</td>
-                <td class="small" data-field="tipo_regola">{r.tipo_regola === 'tipo_vs_tipo' ? 'T vs T' : r.tipo_regola === 'desiderata_mismatch' ? 'Des.' : 'NW'}</td>
+                <td class="small" data-field="tipo_regola">{etichettaBreve(r.tipo_regola)}</td>
                 <td data-field="flag_a_id">
                   {#if r.flag_a_id}<span class="badge bg-secondary">{@html flagLabel(r.flag_a_id, flagTurno)}</span>
                   {:else}<span class="text-muted small">qualsiasi</span>{/if}

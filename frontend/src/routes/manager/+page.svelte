@@ -10,6 +10,7 @@
   import { user as userStore } from '$lib/auth.js';
   import StyleContextMenu from '$lib/StyleContextMenu.svelte';
   import { etichettaStruttura } from '$lib/etichette.js';
+  import { TIPI_REGOLA, etichettaBreve } from '$lib/regole.js';
   import CellEditor from '$lib/CellEditor.svelte';
   import { clickOutside } from '$lib/admin/actions.js';
   import AppearanceEditor, { APPEARANCE_DEFAULT } from '$lib/admin/AppearanceEditor.svelte';
@@ -3959,9 +3960,9 @@
             <div class="col-3">
               <label class="form-label mb-0 small">Tipo</label>
               <select class="form-select form-select-sm" bind:value={solverNuovaRegola.tipo_regola}>
-                <option value="tipo_vs_tipo">tipo_vs_tipo</option>
-                <option value="desiderata_mismatch">des. mismatch</option>
-                <option value="desiderata_assenza_mismatch">Assenza</option>
+                {#each TIPI_REGOLA as t}
+                  <option value={t.valore}>{t.esteso}</option>
+                {/each}
               </select>
             </div>
             {#if solverNuovaRegola.tipo_regola === 'tipo_vs_tipo'}
@@ -4042,9 +4043,9 @@
                     <td>
                       <select class="form-select form-select-sm" style="width:100px"
                               bind:value={solverEditRegola.tipo_regola}>
-                        <option value="tipo_vs_tipo">T vs T</option>
-                        <option value="desiderata_mismatch">Des.</option>
-                        <option value="desiderata_assenza_mismatch">Ass.</option>
+                        {#each TIPI_REGOLA as t}
+                          <option value={t.valore}>{t.breve}</option>
+                        {/each}
                       </select>
                     </td>
                     <td>
@@ -4107,7 +4108,7 @@
                   <tr class="{r.is_active ? '' : 'text-muted'}" style="cursor:pointer"
                       onclick={() => solverStartEditRegola(r)}>
                     <td class="fw-semibold">{r.nome || `#${r.id}`}</td>
-                    <td class="small">{r.tipo_regola === 'tipo_vs_tipo' ? 'T vs T' : r.tipo_regola === 'desiderata_mismatch' ? 'Des.' : 'NW'}</td>
+                    <td class="small">{etichettaBreve(r.tipo_regola)}</td>
                     <td><span class="badge bg-secondary">{solverFlagLabel(r.flag_a_id)}</span></td>
                     <td><span class="badge bg-secondary">{solverFlagLabel(r.flag_b_id)}</span></td>
                     <td class="small">{r.tipo_regola === 'tipo_vs_tipo' ? ((r.offset_giorni > 0 ? '+' : '') + r.offset_giorni) : '\u2014'}</td>

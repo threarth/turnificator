@@ -18,7 +18,9 @@ import random
 import time
 
 from app.db import query_one, query_all, execute_write
-from app.services.validatori import valida_assegnazione, _flag_matcha
+from app.services.validatori import (
+    TIPO_REGOLA_COMPOSIZIONE_PARZIALE, valida_assegnazione, _flag_matcha
+)
 from app.services.fasce_orarie import carica_mappa_flag
 from app.services.history import aggiungi_step
 from app.services.config_snapshot import (
@@ -155,7 +157,12 @@ def _verifica_vincoli_hard(uid, turno_id, giorno, stati, vincoli_g,
     except (ValueError, Exception):
         return False
 
-    # Nel solver/optimizer tutte le regole attive sono bloccanti
+    # Nel solver/optimizer tutte le regole attive sono bloccanti, tranne il
+    # parziale di una composizione: quello e' il passaggio obbligato per
+    # arrivare alla composizione intera, non un motivo per rifiutare lo swap.
+    val['conflitti'] = [c for c in val['conflitti']
+                        if c.get('tipo_regola') != TIPO_REGOLA_COMPOSIZIONE_PARZIALE]
+
     if escludi_regole:
         val['conflitti'] = [c for c in val['conflitti']
                             if c.get('id') not in escludi_regole]

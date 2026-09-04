@@ -543,6 +543,13 @@ CREATE TABLE IF NOT EXISTS preset_turni_qualitativo (
 --   'tipo_vs_tipo'                  — conflitto turno A vs turno B
 --   'desiderata_mismatch'           — flag richiesto ≠ flag assegnato
 --   'desiderata_assenza_mismatch'   — assegnato con richiesta assenza
+--   'desiderata_composizione_parziale'
+--                                   — al lavoratore e' arrivato un pezzo della
+--                                     fascia che aveva chiesto (chi chiede la
+--                                     lunga ha la mattina, non ancora il
+--                                     pomeriggio). Non e' un errore: e' un
+--                                     lavoro a meta', e sparisce da solo quando
+--                                     arriva il pezzo che manca.
 --
 -- Match per flag con risalita gerarchia parent (max 2 livelli):
 --   flag_a_id/flag_b_id = NULL → qualsiasi turno
@@ -553,7 +560,8 @@ CREATE TABLE IF NOT EXISTS regole_conflitto (
     tipo_regola         TEXT    NOT NULL CHECK(tipo_regola IN (
                             'tipo_vs_tipo',
                             'desiderata_mismatch',
-                            'desiderata_assenza_mismatch'
+                            'desiderata_assenza_mismatch',
+                            'desiderata_composizione_parziale'
                         )),
     flag_a_id           INTEGER REFERENCES flag_turno(id),
     flag_b_id           INTEGER REFERENCES flag_turno(id),

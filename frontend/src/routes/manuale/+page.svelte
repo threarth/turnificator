@@ -383,6 +383,7 @@
   .manuale-corpo :global(.sw-free)  { background: var(--bs-secondary-bg); }
   .manuale-corpo :global(.sw-match) { background: var(--bs-success); }
   .manuale-corpo :global(.sw-mis)   { background: var(--bs-warning); }
+  .manuale-corpo :global(.sw-parz)  { background: var(--bs-info-bg-subtle); }
   .manuale-corpo :global(.sw-forc)  { background: var(--bs-danger); }
   .manuale-corpo :global(.sw-ns)    { background: var(--bs-primary); }
   .manuale-corpo :global(.sw-nr)    { background: var(--bs-primary-bg-subtle); }
