@@ -598,7 +598,8 @@ INSERT OR IGNORE INTO vincoli_globali (chiave, valore, descrizione) VALUES
     ('max_turni_giorno',       '1',  'Max turni per persona al giorno'),
     ('max_ore_mese',           '0',  'Max ore mese (0=illimitato)'),
     ('max_festivi_mese',       '4',  'Max turni in giorni festivi al mese'),
-    ('max_n_turni_mese',       '0',  'Offset turni/mese rispetto a turni dovuti (0=esatto, +N/-N)');
+    ('max_n_turni_mese',       '0',  'Offset turni/mese rispetto a turni dovuti (0=esatto, +N/-N)'),
+    ('preferenza_struttura',   '0',  'Vantaggio a chi lavora nella propria struttura, in centesimi di turno (0=indifferente)');
 
 -- =============================================================================
 -- TABELLA: vincoli_utente

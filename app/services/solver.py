@@ -145,7 +145,7 @@ def _inizializza_stati(calendario_id, giorni_info, turni_info, flag_map,
     basato sulle assegnazioni esistenti.
     """
     utenti = query_all(
-        "SELECT id, sigla FROM users "
+        "SELECT id, sigla, sovragruppo_id FROM users "
         "WHERE is_active=1 AND escluso_turni=0 AND role IN ('basic','manager','admin') ORDER BY sigla",
         ()
     )
@@ -186,6 +186,8 @@ def _inizializza_stati(calendario_id, giorni_info, turni_info, flag_map,
     for u in utenti:
         stati[u['id']] = {
             'sigla': u['sigla'],
+            # Serve alla preferenza per la propria struttura.
+            'sovragruppo_id': u.get('sovragruppo_id'),
             'turni_per_giorno': {},
             'giorni_lavorati': set(),
             'ore_mese': 0.0,
@@ -271,6 +273,31 @@ def _carica_esclusioni_turno(preset_id):
         per_utente.setdefault(r['user_id'], []).append(dict(r))
 
     return per_utente
+
+
+def _vantaggio_struttura(stato, sg_turno, peso):
+    """
+    Quanto conviene mettere questa persona in questo turno, per struttura.
+
+    Il punteggio di scelta e' un rapporto in cui vince il piu' basso: uno
+    sconto avvicina il candidato all'assegnazione. Chi lavora nella propria
+    struttura lo riceve; chi non ne ha una non e' ne' favorito ne' penalizzato.
+
+    Con peso zero — il default — la struttura non conta e il solver assegna
+    indifferentemente, che e' come si e' sempre comportato.
+
+    Args:
+        stato (dict): stato del candidato, con `sovragruppo_id`.
+        sg_turno (int|None): struttura del turno da coprire.
+        peso (float): quanto vale la preferenza, in turni di vantaggio.
+
+    Returns:
+        float: lo sconto da sottrarre al punteggio, 0 se non si applica.
+    """
+    if not peso or sg_turno is None:
+        return 0.0
+
+    return peso if stato.get('sovragruppo_id') == sg_turno else 0.0
 
 
 def _carica_giorni_esclusi():
@@ -732,6 +759,10 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
     giorno_tipo = ctx['giorno_tipo']
     indisponibilita = ctx['indisponibilita']
     vincoli_g = ctx['vincoli_g']
+
+    # Quanto vale lavorare nella propria struttura, in centesimi di turno:
+    # 0 = indifferente, 100 = un turno intero di vantaggio.
+    peso_struttura = vincoli_g.get('preferenza_struttura', 0) / 100.0
     vincoli_utente_cache = ctx['vincoli_utente_cache']
     vincoli_solver_list = ctx['vincoli_solver_list']
     vs_utente_cache = ctx['vs_utente_cache']
@@ -931,6 +962,8 @@ def _esegui_assegnazione(ctx, escludi_regole, top_k=1):
 
                     if (giorno - 1) not in s['giorni_lavorati']:
                         rapporto -= 0.001
+
+                    rapporto -= _vantaggio_struttura(s, sg_id, peso_struttura)
 
                     debito_list.append((rapporto, s['sigla'], uid))
 
