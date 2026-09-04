@@ -3499,6 +3499,12 @@ def _crea_persone(persone):
     return credenziali
 
 
+# Come si chiama la struttura turni quando nasce senza che nessuno le dia un
+# nome. L'organizzazione ne ha una sola e non la sceglie da un elenco:
+# l'etichetta serve al database, non a chi la usa.
+NOME_STRUTTURA_PREDEFINITO = 'struttura_turni'
+
+
 def _struttura_del_tenant():
     """
     La struttura turni del tenant: ne ha una sola.
@@ -3571,12 +3577,15 @@ def _crea_struttura_turni(nome_preset, letto):
         preset_id = execute_write(
             "INSERT INTO struttura_presets (nome, created_by, is_default) "
             "VALUES (?,?,1)",
-            (nome_preset, get_current_user()['id'])
+            (nome_preset or NOME_STRUTTURA_PREDEFINITO, get_current_user()['id'])
         ).lastrowid
     else:
         _svuota_struttura(preset_id)
+        # Senza un nome nuovo la struttura tiene il suo: e' un'etichetta
+        # interna, e cambiarla senza che nessuno l'abbia chiesto e' rumore.
         execute_write(
-            "UPDATE struttura_presets SET nome=?, is_default=1 WHERE id=?",
+            "UPDATE struttura_presets SET nome=COALESCE(?, nome), is_default=1 "
+            "WHERE id=?",
             (nome_preset, preset_id)
         )
         # Una sola predefinita: se ne restassero altre, il calendario non
@@ -3645,26 +3654,18 @@ def applica_modello():
 
     Form multipart:
         file (file): il foglio.
-        nome_preset (str): come chiamare la struttura turni.
         strutture (str): JSON {chiave: nome}, per correggere le sedi dedotte
                          dal foglio. Due nomi uguali fondono due strutture.
+        nome_preset (str): facoltativo; senza, la struttura tiene il nome che
+                           ha, o ne riceve uno di serie se e' nuova.
     """
     nome_file, contenuto, errore = _modello_dalla_richiesta()
     if errore:
         return jsonify({'ok': False, 'errore': errore}), 400
 
-    nome_preset = (request.form.get('nome_preset') or '').strip()
-    if not nome_preset:
-        return jsonify({'ok': False, 'errore': 'Dai un nome alla struttura turni.'}), 400
-    altra = query_one(
-        "SELECT id FROM struttura_presets WHERE nome=? AND id!=COALESCE(?, -1)",
-        (nome_preset, _struttura_del_tenant())
-    )
-    if altra:
-        return jsonify({
-            'ok': False,
-            'errore': f'Un\'altra struttura turni si chiama gia "{nome_preset}".'
-        }), 409
+    # Il nome non si chiede: l'organizzazione ha una struttura sola e non la
+    # sceglie da un elenco. Resta accettato per chi chiama l'API a mano.
+    nome_preset = (request.form.get('nome_preset') or '').strip() or None
 
     try:
         letto = leggi_struttura(io.BytesIO(contenuto))

@@ -289,7 +289,7 @@ def test_un_file_che_non_e_un_foglio_viene_rifiutato(client, admin_token, auth):
 def test_applicare_crea_struttura_tipologie_e_persone(client, admin_token, auth):
     """La struttura del foglio diventa la struttura turni del programma."""
     rv = client.post('/api/admin/modello/applica',
-                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     data={**_allega(_modello_di_prova())},
                      content_type='multipart/form-data',
                      headers=auth(admin_token))
     assert rv.status_code == 201, rv.get_json()
@@ -320,7 +320,7 @@ def test_chi_c_e_gia_non_viene_ricreato(client, admin_token, auth):
                 headers=auth(admin_token))
 
     rv = client.post('/api/admin/modello/applica',
-                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio 2'},
+                     data={**_allega(_modello_di_prova())},
                      content_type='multipart/form-data',
                      headers=auth(admin_token))
     assert rv.status_code == 201, rv.get_json()
@@ -399,7 +399,6 @@ def test_le_correzioni_arrivano_fino_alla_struttura_creata(client, admin_token, 
 
     rv = client.post('/api/admin/modello/applica',
                      data={**_allega(_modello_di_prova()),
-                           'nome_preset': 'Con correzioni',
                            'strutture': _json.dumps({'SG': 'Sede unica',
                                                      'ADD': 'Sede unica'})},
                      content_type='multipart/form-data',
@@ -445,7 +444,7 @@ def test_importare_due_volte_non_lascia_due_strutture(client, admin_token, auth)
 def test_la_struttura_importata_diventa_quella_dell_organizzazione(client, admin_token, auth):
     """Senza il segno di predefinita, il calendario non saprebbe quale usare."""
     rv = client.post('/api/admin/modello/applica',
-                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     data={**_allega(_modello_di_prova())},
                      content_type='multipart/form-data',
                      headers=auth(admin_token))
     preset_id = rv.get_json()['preset_id']
@@ -459,7 +458,7 @@ def test_la_struttura_importata_diventa_quella_dell_organizzazione(client, admin
 def test_il_calendario_non_chiede_quale_struttura(client, admin_token, auth):
     """Ce n'e' una sola: chiederlo sarebbe una domanda senza alternative."""
     client.post('/api/admin/modello/applica',
-                data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                data={**_allega(_modello_di_prova())},
                 content_type='multipart/form-data', headers=auth(admin_token))
 
     rv = client.post('/api/admin/calendari', json={'mese': 3, 'anno': 2028},
@@ -471,7 +470,7 @@ def test_il_calendario_non_chiede_quale_struttura(client, admin_token, auth):
 def test_i_turni_importati_finiscono_nel_calendario(client, admin_token, auth):
     """La struttura del foglio e' quella con cui si costruisce il mese."""
     client.post('/api/admin/modello/applica',
-                data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                data={**_allega(_modello_di_prova())},
                 content_type='multipart/form-data', headers=auth(admin_token))
 
     rv = client.post('/api/admin/calendari', json={'mese': 4, 'anno': 2028},
@@ -508,7 +507,7 @@ def test_senza_predefinita_si_usa_l_ultima_creata(client, admin_token, auth, _te
     db.commit()
 
     rv = client.post('/api/admin/modello/applica',
-                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     data={**_allega(_modello_di_prova())},
                      content_type='multipart/form-data', headers=auth(admin_token))
 
     assert rv.status_code == 201, rv.get_json()
@@ -525,7 +524,7 @@ def test_la_sospensione_dal_solver_si_rilegge(client, admin_token, auth):
     dentro al solver senza dirlo.
     """
     rv = client.post('/api/admin/modello/applica',
-                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     data={**_allega(_modello_di_prova())},
                      content_type='multipart/form-data', headers=auth(admin_token))
     preset_id = rv.get_json()['preset_id']
 
@@ -533,3 +532,36 @@ def test_la_sospensione_dal_solver_si_rilegge(client, admin_token, auth):
                            headers=auth(admin_token)).get_json()['struttura']
 
     assert all('escluso_solver' in sg for sg in struttura)
+
+
+def test_senza_nome_la_struttura_tiene_il_suo(client, admin_token, auth):
+    """
+    Il nome non si chiede piu': e' un'etichetta interna, e reimportare non
+    deve ribattezzare la struttura alle spalle di chi l'ha nominata.
+    """
+    prima = _strutture_del_tenant(client, admin_token, auth)
+    nome_prima = next(p['nome'] for p in prima if p['is_default'] or len(prima) == 1)
+
+    rv = client.post('/api/admin/modello/applica',
+                     data=_allega(_modello_di_prova()),
+                     content_type='multipart/form-data', headers=auth(admin_token))
+    assert rv.status_code == 201, rv.get_json()
+
+    dopo = _strutture_del_tenant(client, admin_token, auth)
+    assert [p['nome'] for p in dopo if p['is_default']] == [nome_prima]
+
+
+def test_una_struttura_nuova_senza_nome_ne_riceve_uno(client, admin_token, auth, _test_env):
+    """Il database vuole un'etichetta anche quando all'utente non serve."""
+    db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
+    db.execute("DELETE FROM struttura_presets")
+    db.commit()
+
+    rv = client.post('/api/admin/modello/applica',
+                     data=_allega(_modello_di_prova()),
+                     content_type='multipart/form-data', headers=auth(admin_token))
+    assert rv.status_code == 201, rv.get_json()
+
+    strutture = _strutture_del_tenant(client, admin_token, auth)
+    assert len(strutture) == 1
+    assert strutture[0]['nome']

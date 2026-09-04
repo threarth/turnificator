@@ -30,7 +30,6 @@
 -->
 <script>
     import { adminApi } from '$lib/api.js';
-    import { focusOnMount } from '../actions.js';
     import DeleteButton from '../DeleteButton.svelte';
     import VincoliSolver from '../VincoliSolver.svelte';
     import { appiattisciStruttura, costruisciStruttura, nomeDuplicato }
@@ -67,6 +66,11 @@
     export let onregoleaggiornate;
     export let onconfigaggiornata;
     export let onstrutturaimportata;
+
+    // Come si chiama la struttura turni quando nasce da qui. Un nome non si
+    // chiede piu': l'organizzazione ne ha una sola, non la sceglie da un
+    // elenco, e l'etichetta serve solo al database.
+    const NOME_STRUTTURA = 'struttura_turni';
 
     // Nomi comuni per la struttura, con il loro plurale gia' corretto:
     // sceglierli da un elenco evita di doverlo indovinare dal singolare.
@@ -155,7 +159,6 @@
         if (lette.length) strutture = lette;
     }
 
-    let nomePreset = '';
 
     // Contatore per gli id temporanei: il server distingue le entita' nuove
     // dal fatto che l'id non e' un intero.
@@ -287,14 +290,10 @@
 
     // Le sezioni si attraversano liberamente: il requisito riguarda solo il
     // salvataggio finale, che senza turni e senza nome non ha cosa produrre.
-    $: puoSalvare = turniTotali > 0
-        && nomePreset.trim()
-        && etichetta.singolare.trim();
+    $: puoSalvare = turniTotali > 0 && etichetta.singolare.trim();
 
     // Cosa manca perche' la configurazione sia salvabile, detto all'utente.
-    $: cosaManca = !turniTotali ? 'Aggiungi almeno un turno.'
-        : !nomePreset.trim() ? 'Dai un nome a questa configurazione.'
-        : '';
+    $: cosaManca = !turniTotali ? 'Aggiungi almeno un turno.' : '';
 
     function vaiA(indice) {
         errore = '';
@@ -312,7 +311,7 @@
     async function presetDaAggiornare() {
         if (presetEsistente?.id) return presetEsistente.id;
 
-        const creato = await adminApi.creaPreset({ nome: nomeCompletoPreset(nomePreset) });
+        const creato = await adminApi.creaPreset({ nome: NOME_STRUTTURA });
         if (!creato.ok) {
             errore = creato.errore || 'Creazione della struttura turni non riuscita.';
             return null;
@@ -348,11 +347,7 @@
         oncompletata(presetId, { ...etichetta });
     }
 
-    // I preset di struttura portano tutti lo stesso prefisso.
-    function nomeCompletoPreset(nome) {
-        const pulito = nome.trim();
-        return pulito.startsWith('struttura_') ? pulito : `struttura_${pulito}`;
-    }
+
 </script>
 
 <div class="guidata card">
@@ -630,18 +625,6 @@
                 </section>
             {/each}
 
-            <section class="guidata-sezione guidata-inserimento">
-                <h6 class="guidata-titolo">Dai un nome a questa struttura turni</h6>
-                <p class="guidata-aiuto">
-                    È il nome con cui la sceglierai quando aprirai un calendario.
-                    Di solito basta l'anno, o il nome del servizio.
-                </p>
-                <div style="width:280px">
-                    <label class="form-label visually-hidden" for="nome-struttura-turni">Nome</label>
-                    <input id="nome-struttura-turni" class="form-control form-control-sm"
-                           use:focusOnMount placeholder="es. 2026" bind:value={nomePreset} />
-                </div>
-            </section>
         {/if}
 
         <!-- ═══ Le persone ═══ -->

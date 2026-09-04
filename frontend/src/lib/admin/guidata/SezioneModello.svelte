@@ -26,7 +26,6 @@
              + "nell'ordine in cui il foglio li dispone.",
         scegli: 'Il foglio',
         analizza: 'Leggi il foglio',
-        nomePreset: 'Nome della struttura turni',
         crea: 'Crea la struttura',
         rileggi: 'Cambia foglio',
     };
@@ -34,7 +33,6 @@
     let file = null;
     let letto = null;
     let esito = null;
-    let nomePreset = '';
     let nomiStrutture = {};
     let errore = '';
     let inCorso = false;
@@ -44,7 +42,6 @@
         letto = null;
         esito = null;
         errore = '';
-        if (file && !nomePreset) nomePreset = file.name.replace(/\.xlsx?$/i, '');
     }
 
     async function analizza() {
@@ -75,11 +72,11 @@
     }
 
     async function crea() {
-        if (!file || !nomePreset.trim() || inCorso) return;
+        if (!file || inCorso) return;
 
         inCorso = true;
         errore = '';
-        const r = await adminApi.applicaModello(file, nomePreset.trim(), nomiStrutture);
+        const r = await adminApi.applicaModello(file, nomiStrutture);
         inCorso = false;
 
         if (!r.ok) { errore = r.errore || 'Creazione non riuscita.'; return; }
@@ -225,18 +222,10 @@
             </div>
         {/if}
 
-        <div class="d-flex gap-3 align-items-end flex-wrap">
-            <div style="width:280px">
-                <label class="form-label" for="modello-nome">{TESTI.nomePreset}</label>
-                <input id="modello-nome" class="form-control form-control-sm"
-                       bind:value={nomePreset} />
-            </div>
-            <button class="btn btn-success btn-sm"
-                    disabled={!nomePreset.trim() || inCorso} on:click={crea}>
-                {#if inCorso}<span class="spinner-border spinner-border-sm me-1"></span>{/if}
-                {TESTI.crea}
-            </button>
-        </div>
+        <button class="btn btn-success btn-sm" disabled={inCorso} on:click={crea}>
+            {#if inCorso}<span class="spinner-border spinner-border-sm me-1"></span>{/if}
+            {TESTI.crea}
+        </button>
     </section>
 {/if}
 
