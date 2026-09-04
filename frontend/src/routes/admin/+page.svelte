@@ -33,7 +33,14 @@
   // La struttura turni dell'organizzazione: ce n'e' una sola, ed e' quella
   // predefinita — o l'unica, se nessuna porta il segno.
   $: strutturaDelTenant = presets.find(p => p.is_default)
-      ?? (presets.length === 1 ? presets[0] : null);
+      ?? (presets.length ? presets[presets.length - 1] : null);
+
+  // La scheda "Struttura turni" apre da sola quella dell'organizzazione:
+  // e' una sola, e sceglierla da una lista non e' piu' una domanda sensata.
+  $: if (tab === 'strutturaturni' && strutturaDelTenant
+         && editPreset?.id !== strutturaDelTenant.id) {
+    apriPreset(strutturaDelTenant);
+  }
   let msgCal      = '';
 
   // ── Utenti ─────────────────────────────────────────────────────
@@ -66,9 +73,7 @@
   let presets       = [];
   let msgStruttura  = '';
   let editPreset    = null;   // { id, nome, struttura: [...] }
-  let nuovoPreset   = { nome: '' };
   let autoSigla     = true;
-  let duplicaLoading = null;  // id del preset in duplicazione
 
   // Esclusioni turno per preset (sezione sotto l'editor struttura)
   let etPresetData    = [];     // [{id, user_id, tipo, target_id}] caricati dal backend
@@ -89,7 +94,6 @@
 
   // Configurazione guidata: il tenant ne ha una sola, quindi si riapre
   // sempre quella, non se ne sceglie una fra tante.
-  let wizardAttivo = false;
 
   // Proposta arrivata dal gestore dell'installazione, se ce n'e' una.
   let proposta = null;
@@ -946,27 +950,13 @@
     return autoSigla ? `${base}_${g.sigla}` : base;
   }
 
-  // Preset CRUD
-  async function creaPreset() {
-    if (!nuovoPreset.nome.trim()) return;
-    let nome = nuovoPreset.nome.trim();
-    if (!nome.startsWith('struttura_')) nome = 'struttura_' + nome;
-    const r = await adminApi.creaPreset({ nome });
-    if (r.ok) {
-      presets = (await adminApi.getPresets()).presets ?? [];
-      nuovoPreset.nome = '';
-      setMsg('stru', 'Preset creato.');
-    } else setMsg('stru', r.errore, false);
-  }
-  // La procedura guidata ha creato il preset: lo si apre nell'editor
-  // normale, dove l'utente esperto prosegue a mano.
+  // La configurazione guidata ha scritto la struttura dell'organizzazione:
+  // si passa alla scheda che la modifica, dove si rifinisce a mano.
   async function wizardCompletato(presetId, etichetta) {
     etichettaStruttura.set(etichetta);
-    wizardAttivo = false;
     presets = (await adminApi.getPresets()).presets ?? [];
-    const creato = presets.find(p => p.id === presetId);
-    if (creato) await apriPreset(creato);
-    setMsg('stru', 'Struttura turni creata. Puoi rifinirla qui.');
+    tab = 'strutturaturni';
+    setMsg('stru', 'Struttura turni salvata. Puoi rifinirla qui.');
   }
 
   async function apriPreset(p) {
@@ -1103,25 +1093,6 @@
       setMsg('stru', 'Preset salvato.');
     } else setMsg('stru', r.errore, false);
   }
-  async function eliminaPreset(id) {
-    const r = await adminApi.delPreset(id);
-    if (r.ok) {
-      presets = (await adminApi.getPresets()).presets ?? [];
-      if (editPreset?.id === id) editPreset = null;
-      setMsg('stru', 'Preset eliminato.');
-    } else setMsg('stru', r.errore, false);
-  }
-
-  async function duplicaPreset(p) {
-    duplicaLoading = p.id;
-    const r = await adminApi.duplicaPreset(p.id, {});
-    duplicaLoading = null;
-    if (r.ok) {
-      presets = (await adminApi.getPresets()).presets ?? [];
-      setMsg('stru', `Preset "${r.nome}" creato.`);
-    } else setMsg('stru', r.errore || 'Errore duplicazione.', false);
-  }
-
   // ── JSON manipulation (tutto locale, salvaPreset per persistere) ──
 
   function addSg() {
@@ -1688,13 +1659,21 @@
   <ul class="nav nav-tabs mb-3">
     {#each (
       $userStore?.role === 'manager'
-        ? [['calendari','calendar3','Calendari'],['struttura','compass','Configurazione guidata']]
-        : [['calendari','calendar3','Calendari'],['utenti','people-fill','Utenti'],
-           ['configurazione','sliders','Configurazione manuale'],
-           ['struttura','compass','Configurazione guidata']]
-    ) as [k,ico,lbl]}
+        ? [['calendari','calendar3','Calendari',false],
+           ['struttura','compass','Configurazione guidata',false]]
+        : [['calendari','calendar3','Calendari',false],
+           ['utenti','people-fill','Utenti',false],
+           ['configurazione','sliders','Configurazione manuale',false],
+           ['struttura','compass','Configurazione guidata',false],
+           ['strutturaturni','diagram-3','Struttura turni',true]]
+    ) as [k,ico,lbl,vuoleStruttura]}
+      {@const spenta = vuoleStruttura && !strutturaDelTenant}
       <li class="nav-item">
-        <button class="nav-link {tab===k?'active':''}" on:click={() => tab=k}>
+        <!-- Senza una configurazione globale non c'e' struttura da
+             modificare: la scheda resta sbiadita invece di aprirsi vuota. -->
+        <button class="nav-link {tab===k?'active':''}" disabled={spenta}
+                title={spenta ? 'Prima crea la configurazione globale' : null}
+                on:click={() => tab=k}>
           <i class="bi bi-{ico} me-1"></i>{lbl}
         </button>
       </li>
@@ -2815,10 +2794,10 @@
   {:else if tab === 'struttura'}
     {#if msgStruttura}<div class="alert py-2 small {msgStruttura.startsWith('✓')?'alert-success':'alert-danger'}">{msgStruttura}</div>{/if}
 
-    {#if wizardAttivo}
+    <PropostaConfigurazione {proposta} ondecisa={caricaTutto} />
 
-      <ConfigurazioneGuidata fasce={flagTurno} tipologie={tipiQualitativo}
-                             presetEsistente={presets[0] ?? null}
+    <ConfigurazioneGuidata fasce={flagTurno} tipologie={tipiQualitativo}
+                             presetEsistente={strutturaDelTenant}
                              conteggi={conteggiConfig}
                              {utenti} sovragruppi={sovragruppiDisponibili}
                              tipiRichiesta={tipiRichiesta}
@@ -2826,7 +2805,7 @@
                              etichetta={$etichettaStruttura}
                              {vincoliGlobali} {vincoliSolver}
                              oncompletata={wizardCompletato}
-                             onannulla={() => wizardAttivo = false}
+                             onannulla={() => tab = 'calendari'}
                              onfasceaggiornate={async () => {
                                flagTurno = (await adminApi.getFlagTurno()).flags ?? [];
                              }}
@@ -2851,91 +2830,11 @@
                                config = (await adminApi.getConfig()).config ?? {};
                              }} />
 
-    {:else if !editPreset}
+  {:else if tab === 'strutturaturni'}
+    {#if msgStruttura}<div class="alert py-2 small {msgStruttura.startsWith('✓')?'alert-success':'alert-danger'}">{msgStruttura}</div>{/if}
 
-      <PropostaConfigurazione {proposta} ondecisa={caricaTutto} />
-
-      <!-- ═══ Sezione Preset Struttura ═══ -->
-      <h6 class="text-muted text-uppercase mb-3">Preset struttura turni</h6>
-
-      <!-- ── Lista preset ── -->
-      {#if $userStore?.role !== 'manager'}
-      <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
-        <input class="form-control form-control-sm" style="width:220px"
-               bind:value={nuovoPreset.nome} placeholder="Nome nuovo preset"
-               on:keydown={e => e.key === 'Enter' && creaPreset()} />
-        <button class="btn btn-primary btn-sm" on:click={creaPreset}>
-          <i class="bi bi-plus-lg me-1"></i>Crea preset
-        </button>
-        <span class="text-muted small">oppure</span>
-        <button class="btn btn-outline-primary btn-sm" on:click={() => wizardAttivo = true}>
-          <i class="bi bi-compass me-1"></i>Configurazione guidata
-        </button>
-      </div>
-      <div class="form-text small mb-3" style="max-width:540px">
-        La configurazione guidata accompagna in sette sezioni — fasce,
-        tipologie, strutture, turni, persone, conteggi e vincoli — e si può
-        riaprire per aggiornare solo quello che serve.
-      </div>
-      {/if}
-
-      {#if presets.length === 0}
-        <div class="text-muted small">Nessun preset. Creane uno per iniziare.</div>
-      {:else}
-        <!-- Preset più recente (last_used_at) in cima, poi alfabetico -->
-        {@const presetsOrdinati = [...presets].sort((a, b) => {
-          if (a.last_used_at && !b.last_used_at) return -1;
-          if (!a.last_used_at && b.last_used_at) return 1;
-          if (a.last_used_at && b.last_used_at) return a.last_used_at < b.last_used_at ? 1 : -1;
-          return a.nome.localeCompare(b.nome);
-        })}
-        <div class="list-group" style="max-width:540px">
-          {#each presetsOrdinati as p, i}
-            {@const isLastUsed = i === 0 && p.last_used_at}
-            <div class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-2"
-                 class:list-group-item-primary={isLastUsed}>
-              <i class="bi bi-diagram-3 {p.is_default ? 'text-success' : isLastUsed ? 'text-primary' : 'text-secondary'}"></i>
-              <div class="flex-grow-1 min-w-0">
-                <span class="fw-semibold">{p.nome}</span>
-                {#if p.is_default}
-                  <span class="badge bg-success ms-1 small">predefinito</span>
-                {/if}
-                {#if isLastUsed}
-                  <span class="badge bg-primary ms-1 small">ultimo usato</span>
-                {/if}
-              </div>
-              {#if !p.is_default && $userStore?.role !== 'manager'}
-                <button class="btn btn-outline-success btn-sm py-0" title="Imposta come predefinito"
-                        on:click|stopPropagation={async () => {
-                          const r = await adminApi.setPresetDefault(p.id);
-                          if (r.ok) { presets = (await adminApi.getPresets()).presets ?? []; setMsg('struttura', 'Preset predefinito impostato.'); }
-                          else setMsg('struttura', r.errore, false);
-                        }}>
-                  <i class="bi bi-star"></i>
-                </button>
-              {/if}
-              <button class="btn btn-outline-primary btn-sm py-0" on:click={() => apriPreset(p)}>
-                <i class="bi bi-pencil-square me-1"></i>Apri
-              </button>
-              <button class="btn btn-outline-secondary btn-sm py-0"
-                      title="Duplica preset"
-                      disabled={duplicaLoading === p.id}
-                      on:click={() => duplicaPreset(p)}>
-                {#if duplicaLoading === p.id}
-                  <span class="spinner-border spinner-border-sm"></span>
-                {:else}
-                  <i class="bi bi-copy"></i>
-                {/if}
-              </button>
-              {#if $userStore?.role !== 'manager'}
-                <DeleteButton ondelete={() => eliminaPreset(p.id)} stopPropagation />
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-
+    {#if !editPreset}
+      <div class="text-muted small">Caricamento della struttura turni…</div>
     {:else}
       <!-- ── Editor preset ── -->
       <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
