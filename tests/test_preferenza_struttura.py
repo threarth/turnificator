@@ -63,3 +63,31 @@ def test_il_vincolo_globale_di_serie_e_indifferente(client, admin_token, auth):
     )
     assert preferenza is not None
     assert int(preferenza['valore']) == 0
+
+
+# ---------------------------------------------------------------------------
+# Sospendere un'intera struttura dal riempimento automatico
+# ---------------------------------------------------------------------------
+
+def test_di_serie_nessuna_struttura_e_sospesa(app):
+    from app.services.solver import _strutture_escluse_dal_solver
+
+    with app.test_request_context('/'):
+        from flask import g
+        g.tenant_slug = 'testorg'
+        assert _strutture_escluse_dal_solver() == set()
+
+
+def test_una_struttura_sospesa_viene_riconosciuta(app):
+    """Il solver non deve nemmeno considerare chi vi appartiene."""
+    from app.db import execute_write, query_one
+    from app.services.solver import _strutture_escluse_dal_solver
+
+    with app.test_request_context('/'):
+        from flask import g
+        g.tenant_slug = 'testorg'
+
+        sg = query_one("SELECT id FROM sovragruppi LIMIT 1")
+        execute_write("UPDATE sovragruppi SET escluso_solver = 1 WHERE id = ?", (sg['id'],))
+
+        assert _strutture_escluse_dal_solver() == {sg['id']}

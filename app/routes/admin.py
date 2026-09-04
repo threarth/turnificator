@@ -1071,7 +1071,8 @@ def duplica_preset(pid):
     t_map  = {}   # old_pt_id → new_pt_id
 
     sgs = query_all(
-        "SELECT id, sigla, nome, ambito, ordine, style FROM sovragruppi WHERE preset_id=? ORDER BY ordine",
+        "SELECT id, sigla, nome, ambito, escluso_solver, ordine, style "
+        "FROM sovragruppi WHERE preset_id=? ORDER BY ordine",
         (pid,)
     )
     for sg in sgs:
@@ -1303,7 +1304,8 @@ def get_struttura_preset(pid):
         return jsonify({'ok': False, 'errore': 'Preset non trovato.'}), 404
 
     sgs = query_all(
-        "SELECT id, sigla, nome, ambito, ordine, style FROM sovragruppi WHERE preset_id=? ORDER BY ordine",
+        "SELECT id, sigla, nome, ambito, escluso_solver, ordine, style "
+        "FROM sovragruppi WHERE preset_id=? ORDER BY ordine",
         (pid,)
     )
     struttura = []
@@ -1434,16 +1436,22 @@ def salva_struttura_preset(pid):
         sg_style_json = json.dumps(sg_in.get('style', {}))
         if new_sg:
             cur = execute_write(
-                "INSERT INTO sovragruppi (preset_id, sigla, nome, ambito, ordine, style) VALUES (?,?,?,?,?,?)",
+                "INSERT INTO sovragruppi (preset_id, sigla, nome, ambito, escluso_solver, "
+                "ordine, style) VALUES (?,?,?,?,?,?,?)",
                 (pid, sg_in.get('sigla', ''), sg_in.get('nome', ''),
-                 sg_in.get('ambito', ''), sg_ordine * 10, sg_style_json)
+                 sg_in.get('ambito', ''),
+                 int(bool(sg_in.get('escluso_solver', 0))),
+                 sg_ordine * 10, sg_style_json)
             )
             sg_real_id = cur.lastrowid
         else:
             execute_write(
-                "UPDATE sovragruppi SET sigla=?, nome=?, ambito=?, ordine=?, style=? WHERE id=?",
+                "UPDATE sovragruppi SET sigla=?, nome=?, ambito=?, escluso_solver=?, "
+                "ordine=?, style=? WHERE id=?",
                 (sg_in.get('sigla', ''), sg_in.get('nome', ''),
-                 sg_in.get('ambito', ''), sg_ordine * 10, sg_style_json, sg_id_in)
+                 sg_in.get('ambito', ''),
+                 int(bool(sg_in.get('escluso_solver', 0))),
+                 sg_ordine * 10, sg_style_json, sg_id_in)
             )
             sg_real_id = sg_id_in
 
@@ -1550,7 +1558,9 @@ def salva_struttura_preset(pid):
 
         struttura_out.append({
             'id': sg_real_id, 'sigla': sg_in.get('sigla', ''), 'nome': sg_in.get('nome', ''),
-            'ambito': sg_in.get('ambito', ''), 'ordine': sg_ordine * 10,
+            'ambito': sg_in.get('ambito', ''),
+            'escluso_solver': int(bool(sg_in.get('escluso_solver', 0))),
+            'ordine': sg_ordine * 10,
             'style': sg_in.get('style', {}), 'gruppi': gruppi_out
         })
 

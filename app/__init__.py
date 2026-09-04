@@ -320,6 +320,7 @@ def _migra_colonne(db):
         ('calendario_turni',   'tipi_qualitativi',    "TEXT NOT NULL DEFAULT '[]'"),
         ('assegnazioni_turni', 'conflitti',           "TEXT NOT NULL DEFAULT '[]'"),
         ('sovragruppi',        'ambito',              "TEXT NOT NULL DEFAULT ''"),
+        ('sovragruppi',        'escluso_solver',      'INTEGER NOT NULL DEFAULT 0'),
         ('sovragruppi',        'style',               "TEXT NOT NULL DEFAULT '{}'"),
         ('gruppi',             'style',               "TEXT NOT NULL DEFAULT '{}'"),
         ('calendario_turni',   'sg_style',            "TEXT NOT NULL DEFAULT '{}'"),

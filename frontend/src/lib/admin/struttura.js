@@ -104,6 +104,7 @@ export function costruisciStruttura(strutture, fasce, nuovoId) {
             sigla: toSigla(s.nome),
             nome: s.nome.trim(),
             ambito: (s.ambito ?? '').trim(),
+            escluso_solver: s.escluso_solver ? 1 : 0,
             gruppi: gruppiDellaStruttura(s, fasce, nuovoId),
         }));
 }

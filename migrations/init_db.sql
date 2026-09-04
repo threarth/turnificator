@@ -462,6 +462,9 @@ CREATE TABLE IF NOT EXISTS sovragruppi (
     sigla     TEXT    NOT NULL,
     nome      TEXT    NOT NULL,
     ambito    TEXT    NOT NULL DEFAULT '',
+    -- I suoi lavoratori restano fuori dal riempimento automatico: il
+    -- solver non li considera affatto. Si assegnano solo a mano.
+    escluso_solver INTEGER NOT NULL DEFAULT 0,
     ordine    INTEGER NOT NULL DEFAULT 0,
     ordine_desiderata INTEGER DEFAULT NULL,  -- override ordine per viste desiderata (NULL = usa "ordine")
     style     TEXT    NOT NULL DEFAULT '{}'

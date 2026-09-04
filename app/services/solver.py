@@ -153,6 +153,11 @@ def _inizializza_stati(calendario_id, giorni_info, turni_info, flag_map,
     if utenti_accessibili is not None:
         utenti = [u for u in utenti if u['id'] in utenti_accessibili]
 
+    # Le strutture sospese: i loro lavoratori non entrano proprio.
+    escluse = _strutture_escluse_dal_solver()
+    if escluse:
+        utenti = [u for u in utenti if u.get('sovragruppo_id') not in escluse]
+
     turno_flag_id = {}
     for t in turni_info:
         turno_flag_id[t['id']] = t.get('flag_id')
@@ -273,6 +278,22 @@ def _carica_esclusioni_turno(preset_id):
         per_utente.setdefault(r['user_id'], []).append(dict(r))
 
     return per_utente
+
+
+def _strutture_escluse_dal_solver():
+    """
+    Le strutture i cui lavoratori restano fuori dal riempimento automatico.
+
+    Serve a sospendere un reparto intero senza toccare le singole persone:
+    i loro turni si assegnano solo a mano.
+
+    Returns:
+        set: id dei sovragruppi esclusi.
+    """
+    righe = query_all(
+        "SELECT id FROM sovragruppi WHERE escluso_solver = 1", ()
+    )
+    return {r['id'] for r in righe}
 
 
 def _vantaggio_struttura(stato, sg_turno, peso):

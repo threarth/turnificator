@@ -132,7 +132,7 @@
     }
 
     function struttureVuota() {
-        return { nome: '', ambito: '', turni: [] };
+        return { nome: '', ambito: '', escluso_solver: 0, turni: [] };
     }
 
     // I concetti sotto cui una fascia puo' stare: dicono se e' diurna,
@@ -560,12 +560,19 @@
                     Il nome è quello che vedrai sul calendario dei turni. L'ambito
                     è facoltativo e serve a distinguere due
                     {etichetta.plurale.toLowerCase()} che si chiamano allo stesso modo.
+                    <br />
+                    <strong>Fuori dal solver</strong> sospende l'intera struttura dal
+                    riempimento automatico: chi vi appartiene non viene considerato, e
+                    i suoi turni si assegnano solo a mano.
                 </p>
 
                 <table class="table table-sm align-middle mb-2">
                     <thead><tr>
-                        <th style="width:280px">Nome</th>
-                        <th style="width:240px">Ambito</th>
+                        <th style="width:250px">Nome</th>
+                        <th style="width:210px">Ambito</th>
+                        <th style="width:190px" title="I suoi lavoratori non entrano nel riempimento automatico">
+                            Fuori dal solver
+                        </th>
                         <th style="width:80px">Elimina</th>
                     </tr></thead>
                     <tbody>
@@ -577,6 +584,10 @@
                                 <td><input class="form-control form-control-sm"
                                            aria-label="Ambito {etichetta.singolare.toLowerCase()} {i + 1}"
                                            placeholder="es. Radiologia" bind:value={s.ambito} /></td>
+                                <td class="text-center">
+                                    <input type="checkbox" checked={!!s.escluso_solver}
+                                           on:change={e => { s.escluso_solver = e.target.checked ? 1 : 0; strutture = [...strutture]; }} />
+                                </td>
                                 <td><DeleteButton ondelete={() => rimuoviStruttura(i)} /></td>
                             </tr>
                         {/each}
