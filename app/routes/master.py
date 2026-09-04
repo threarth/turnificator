@@ -232,15 +232,16 @@ def crea_tenant():
             conn.commit()
 
         # Inserisci admin seed con password generata.
-        # DELETE+INSERT (no INSERT OR IGNORE) per garantire che la password
-        # generata venga effettivamente scritta: schema/template hanno gia'
-        # un seed admin con password di default, OR IGNORE preserverebbe
-        # quel record rendendo la password generata inutilizzabile.
+        #
+        # Si cancella **ogni** amministratore preesistente, non solo quello
+        # che si chiama 'admin'. Lo schema ne semina uno con una password
+        # scritta in init_db.sql e nel README: va bene per l'installazione
+        # dimostrativa, ma in un tenant creato dal master sarebbe una porta
+        # aperta a chiunque conosca lo slug — che il menu del login mostra.
+        # Lasciandolo, la password generata qui sotto non proteggerebbe nulla.
         admin_password = secrets.token_urlsafe(12)
         admin_hash = hash_password(admin_password)
-        conn.execute(
-            "DELETE FROM users WHERE username='admin' OR sigla='ADM'"
-        )
+        conn.execute("DELETE FROM users WHERE role='admin'")
         conn.execute(
             "INSERT INTO users (username, password_hash, role, sigla) "
             "VALUES (?, ?, 'admin', 'ADM')",
@@ -970,7 +971,7 @@ def _estrai_parti_proponibili(db):
         'flag_turno':
             "SELECT id, nome, parent_id, descrizione, orario_inizio, orario_fine, "
             "pausa_minuti, ore_primo_giorno, ore_ultimo_giorno, "
-            "mostra_in_struttura, tipo FROM flag_turno",
+            "mostra_in_struttura, solo_su_richiesta, tipo FROM flag_turno",
         'tipi_qualitativo':
             "SELECT id, nome, descrizione, carico_lavoro FROM tipi_qualitativo",
         'tipi_richiesta':

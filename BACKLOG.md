@@ -83,7 +83,57 @@ loro somma: sui giorni di aprile 2026 tornano i numeri del foglio (4, 5, 6, 5,
 
 ---
 
-## 4. Debiti tecnici noti, non urgenti
+## 4. Isolamento fra tenant — verificato, con due code
+
+Audit fatto. Quello su cui l'isolamento poggia, fissato da
+`tests/test_isolamento_tenant.py` (16 test, che creano un secondo tenant
+passando dalle API del master):
+
+- **Sul disco**: un file SQLCipher per tenant, con una chiave da 256 bit
+  generata al provisioning. La chiave di un tenant non apre il file
+  dell'altro — testato aprendolo davvero.
+- **Nella richiesta**: il tenant si decide solo dal claim firmato nel token.
+  Chiederne un altro in query string, header o body non sposta niente.
+- **Nel codice**: nessuna route di tenant apre il master DB, che è l'unico
+  posto dove i tenant si vedono tutti. È una garanzia strutturale, e il test
+  la verifica sul sorgente.
+- **Nell'autorità**: l'admin di un tenant riceve 403 da ogni route del
+  master; il token di impersonation vale solo dentro il tenant e non riapre
+  le porte del master; l'accesso resta nel log.
+- **In tempo reale**: le room websocket sono prefissate col tenant, altrimenti
+  due calendari con lo stesso id si scambierebbero le modifiche.
+- **Il percorso del database** si costruisce dallo slug, ma lo slug è validato
+  a monte (`^[a-z0-9][a-z0-9-]*[a-z0-9]$`, min 3): niente `../`.
+
+### Chiuso strada facendo
+
+**Ogni tenant creato dal master nasceva con una porta aperta.** Lo schema
+semina un amministratore `admin_uo` la cui password sta in `init_db.sql` e nel
+README; il provisioning generava una password forte per un *altro* account
+(`admin`) e cancellava solo quello, lasciando il primo intatto e attivo.
+Chiunque conoscesse lo slug — che il menu del login mostra — entrava come
+amministratore di quel tenant. Ora il provisioning cancella **ogni**
+amministratore preesistente. Due test lo fissano.
+
+### Coda
+
+- **`get_current_user()` non guarda `is_active`.** Disattivare una persona non
+  ne chiude la sessione: il suo token continua a valere fino alla scadenza. Non
+  è un problema fra tenant, è dentro il tenant.
+- **Leggere la configurazione di un tenant non lascia traccia.** Il master può
+  farlo per proporla altrove, ed è il suo mestiere; ma l'impersonation è
+  loggata e questa no.
+- **Le room websocket hanno un ripiego senza tenant** (`calendar_<id>` quando
+  lo slug manca). Nessuno ci entra mai — l'ingresso richiede lo slug — ma
+  meglio non emettere che emettere in una room condivisa.
+- **Le festività sono inchiodate nel codice** (`_calcola_festivita` in
+  `admin.py`, già con un TODO) e includono i Santi Pietro e Paolo, che è il
+  patrono di Roma: un tenant altrove si trova un festivo che non è suo. Il
+  santo patrono è per definizione un dato per installazione.
+
+---
+
+## 5. Debiti tecnici noti, non urgenti
 
 - **Due convenzioni per il giorno della settimana**: `0 = lunedì` nel solver
   e in `calendario_giorni`, `0 = domenica` nei conteggi del context menu e

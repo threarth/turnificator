@@ -695,40 +695,43 @@
     }
 
     /* ── Riquadri ────────────────────────────────────────────────────── */
-    .guidata-intro {
+    /* Globali di proposito: meta' delle sezioni sono componenti a se', e uno
+       stile scoped qui non raggiunge il loro markup — le lascerebbe senza
+       riquadro, diverse da quelle rimaste inline. */
+    :global(.guidata-intro) {
         font-size: .9rem;
         color: var(--bs-secondary-color);
         max-width: 62ch;
     }
-    .guidata-sezione {
+    :global(.guidata-sezione) {
         border: 1px solid var(--bs-border-color);
         border-radius: .5rem;
         padding: 1rem;
         margin-bottom: 1rem;
     }
     /* Dove si inserisce qualcosa di nuovo, invece che modificare l'esistente. */
-    .guidata-sezione.guidata-inserimento {
+    :global(.guidata-sezione.guidata-inserimento) {
         background: var(--bs-tertiary-bg);
     }
-    .guidata-titolo {
+    :global(.guidata-titolo) {
         font-size: .8rem;
         text-transform: uppercase;
         letter-spacing: .04em;
         color: var(--bs-secondary-color);
         margin-bottom: .5rem;
     }
-    .guidata-aiuto {
+    :global(.guidata-aiuto) {
         font-size: .8rem;
         color: var(--bs-secondary-color);
         margin-bottom: .75rem;
     }
-    .guidata-sezione :global(.form-label) {
+    :global(.guidata-sezione .form-label) {
         font-size: .78rem;
         font-weight: 600;
         color: var(--bs-secondary-color);
         margin-bottom: .2rem;
     }
-    .guidata-sezione :global(.table > thead th) {
+    :global(.guidata-sezione .table > thead th) {
         font-size: .75rem;
         text-transform: uppercase;
         letter-spacing: .03em;
@@ -737,8 +740,8 @@
         border-bottom-width: 1px;
     }
     /* Il campo attivo si vede da lontano: e' la domanda "dove scrivo?". */
-    .guidata-sezione :global(.form-control:focus),
-    .guidata-sezione :global(.form-select:focus) {
+    :global(.guidata-sezione .form-control:focus),
+    :global(.guidata-sezione .form-select:focus) {
         border-color: var(--bs-primary);
         box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .2);
     }

@@ -126,6 +126,60 @@
     <div class="alert alert-danger py-2 small">{errore}</div>
 {/if}
 
+<!-- Prima si aggiunge, poi si correggono quelle che ci sono: e' l'ordine in
+     cui si lavora la prima volta, e il separatore sotto tiene le due cose
+     distinte anche a colpo d'occhio. -->
+<section class="guidata-sezione guidata-inserimento fasce-nuova">
+    <h6 class="guidata-titolo">
+        <span class="fasce-piu" aria-hidden="true">+</span>
+        Aggiungi una fascia
+    </h6>
+    <p class="guidata-aiuto">
+        Servono un nome, una categoria e i due orari. La categoria dice se la
+        fascia è diurna, notturna o di guardia: il programma la usa per
+        applicare le regole da sé — dopo una notte, per esempio, il riposo del
+        giorno dopo è obbligatorio.
+    </p>
+
+    <div class="row g-3 align-items-end">
+        <div class="col-auto" style="width:180px">
+            <label class="form-label" for="fascia-nome">Nome</label>
+            <input id="fascia-nome" class="form-control form-control-sm"
+                   placeholder="es. sera" bind:value={nuova.nome} />
+        </div>
+        <div class="col-auto" style="width:170px">
+            <label class="form-label" for="fascia-categoria">Categoria</label>
+            <select id="fascia-categoria" class="form-select form-select-sm" bind:value={nuova.parent_id}>
+                {#each concetti as c}
+                    <option value={c.id}>{c.nome}</option>
+                {/each}
+            </select>
+        </div>
+        <div class="col-auto" style="width:110px">
+            <label class="form-label" for="fascia-inizio">Inizio</label>
+            <input id="fascia-inizio" class="form-control form-control-sm"
+                   placeholder="16:00" bind:value={nuova.orario_inizio} />
+        </div>
+        <div class="col-auto" style="width:110px">
+            <label class="form-label" for="fascia-fine">Fine</label>
+            <input id="fascia-fine" class="form-control form-control-sm"
+                   placeholder="22:20" bind:value={nuova.orario_fine} />
+        </div>
+        <div class="col-auto" style="width:110px">
+            <label class="form-label" for="fascia-pausa">Pausa (min)</label>
+            <input id="fascia-pausa" class="form-control form-control-sm" type="number" min="0"
+                   bind:value={nuova.pausa_minuti} />
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary btn-sm" disabled={!nuovaCompleta} on:click={aggiungi}>
+                Aggiungi la fascia
+            </button>
+        </div>
+    </div>
+</section>
+
+<hr class="fasce-separatore" />
+
 <section class="guidata-sezione">
     <h6 class="guidata-titolo">Le fasce già disponibili</h6>
     <p class="guidata-aiuto">
@@ -142,7 +196,7 @@
             <th style="width:90px">Fine</th>
             <th style="width:95px">Pausa (min)</th>
             <th style="width:80px">Durata</th>
-            <th style="width:95px" title="Il riempimento automatico non la propone da sé">
+            <th style="width:95px" title="Il riempimento automatico la mette solo a chi l'ha chiesta">
                 Su richiesta
             </th>
             <th style="width:190px">Composta da</th>
@@ -219,59 +273,46 @@
         </tbody>
     </table>
 
-    <p class="guidata-aiuto mt-2 mb-0">
+    <p class="guidata-aiuto mt-3 mb-0">
         <strong>Su richiesta</strong> è un'impostazione per il riempimento
-        automatico: la fascia non viene proposta di sua iniziativa, ma solo a
-        chi l'ha chiesta. È il caso della lunga.
-    </p>
-</section>
-
-<section class="guidata-sezione guidata-inserimento">
-    <h6 class="guidata-titolo">Aggiungi una fascia</h6>
-    <div class="row g-3 align-items-end">
-        <div class="col-auto" style="width:180px">
-            <label class="form-label" for="fascia-nome">Nome</label>
-            <input id="fascia-nome" class="form-control form-control-sm"
-                   placeholder="es. sera" bind:value={nuova.nome} />
-        </div>
-        <div class="col-auto" style="width:170px">
-            <label class="form-label" for="fascia-categoria">Categoria</label>
-            <select id="fascia-categoria" class="form-select form-select-sm" bind:value={nuova.parent_id}>
-                {#each concetti as c}
-                    <option value={c.id}>{c.nome}</option>
-                {/each}
-            </select>
-        </div>
-        <div class="col-auto" style="width:110px">
-            <label class="form-label" for="fascia-inizio">Inizio</label>
-            <input id="fascia-inizio" class="form-control form-control-sm"
-                   placeholder="16:00" bind:value={nuova.orario_inizio} />
-        </div>
-        <div class="col-auto" style="width:110px">
-            <label class="form-label" for="fascia-fine">Fine</label>
-            <input id="fascia-fine" class="form-control form-control-sm"
-                   placeholder="22:20" bind:value={nuova.orario_fine} />
-        </div>
-        <div class="col-auto" style="width:110px">
-            <label class="form-label" for="fascia-pausa">Pausa (min)</label>
-            <input id="fascia-pausa" class="form-control form-control-sm" type="number" min="0"
-                   bind:value={nuova.pausa_minuti} />
-        </div>
-        <div class="col-auto">
-            <button class="btn btn-primary btn-sm" disabled={!nuovaCompleta} on:click={aggiungi}>
-                Aggiungi la fascia
-            </button>
-        </div>
-    </div>
-    <p class="guidata-aiuto mt-2 mb-0">
-        La categoria dice se la fascia è diurna, notturna o di guardia.
-        Il programma la usa per applicare le regole da sé: dopo una
-        notte, per esempio, il riposo del giorno dopo è obbligatorio.
+        automatico. Il solver può usare questa fascia <strong>solo dove il
+        lavoratore l'ha chiesta</strong> nei desiderata: di sua iniziativa non
+        la propone mai, nemmeno se il turno resta scoperto. Chi compila la
+        griglia a mano non è vincolato. È il caso della lunga.
     </p>
 </section>
 
 <style>
+    /* Il riquadro di inserimento si stacca da quello che c'e' gia': bordo
+       marcato in alto e un piu' davanti al titolo. Serve a non far cercare
+       "dove si aggiunge" in fondo alla tabella. */
+    .fasce-nuova {
+        border-top: 3px solid var(--bs-primary);
+    }
+
+    .fasce-piu {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin-right: .35rem;
+        border-radius: 50%;
+        background: var(--bs-primary);
+        color: #fff;
+        font-weight: 700;
+        line-height: 1;
+        vertical-align: -.15rem;
+    }
+
+    /* Sotto questa riga si correggono le fasce che ci sono gia'. */
+    .fasce-separatore {
+        margin: 0 0 1rem;
+        border-top: 1px dashed var(--bs-border-color);
+        opacity: 1;
+    }
+
     .guidata-composizione td {
-        background: #f8f9fa;
+        background: var(--bs-tertiary-bg);
     }
 </style>
