@@ -154,14 +154,6 @@ SEPARATORE_ETICHETTA = ' · '
 # Come si scrive il livello davanti al bersaglio: `sede: S.G.`.
 SEPARATORE_LIVELLO = ': '
 
-# Due livelli si leggono uguali agli altri se non si dice cosa aggiungono:
-# `presidio: S.G.` sembra `sede: S.G.` ma prende anche le aggiuntive, e
-# `postazione: ADD. TC` sembra il turno ma prende tutte le fasce.
-QUALIFICATORI = {
-    'presidio':   ' — ordinari e aggiuntivi',
-    'postazione': ' — ogni fascia',
-}
-
 PASSO_ORDINE = 10
 STILE_TABELLA = 'TableStyleMedium2'
 LARGHEZZA_MASSIMA = 42
@@ -385,30 +377,28 @@ def costruisci_bersagli(turni):
     voci += [(codice, 'tipologia', f'Tutti i turni di tipo {codice}')
              for codice in TIPOLOGIE_SEDE]
 
-    voci += [(codice, 'presidio', f'{nome} — {descrizione}, '
-              f'ordinario e aggiuntivo')
-             for codice, nome, descrizione in PRESIDI]
-
     voci += [(sede[0], 'sede', f'{sede[1]} — {sede[-1]}') for sede in SEDI]
 
     voci += [(metodica, 'metodica', DESCRIZIONI_METODICHE.get(metodica, ''))
              for metodica in sorted({t['metodica'] for t in turni
                                      if t['metodica']})]
 
+    # Un turno come bersaglio e' il posto di lavoro, non la singola
+    # fascia: «mai il TC del San Giovanni» vale mattina e pomeriggio. Chi
+    # volesse la sola mattina scrive due regole, ma non e' mai servito.
     viste = set()
     for turno in turni:
-        if turno['postazione'] not in viste:
-            viste.add(turno['postazione'])
-            voci.append((turno['postazione'], 'postazione',
-                         f"{turno['sede']} · {turno['metodica']} "
-                         f"— tutte le fasce"))
+        if turno['postazione'] in viste:
+            continue
 
-    voci += [(t['etichetta'], 'turno',
-              f"{t['sede']} · {t['metodica']} · {t['fascia']}")
-             for t in turni]
+        viste.add(turno['postazione'])
+        fasce = sorted({t['fascia'] for t in turni
+                        if t['postazione'] == turno['postazione']})
+        voci.append((turno['postazione'], 'turno',
+                     f"{turno['sede']} · {turno['metodica']} · "
+                     f"{' e '.join(fasce)}"))
 
-    righe = [[f'{livello}{SEPARATORE_LIVELLO}{nome}'
-              f'{QUALIFICATORI.get(livello, "")}', livello, nome, note]
+    righe = [[f'{livello}{SEPARATORE_LIVELLO}{nome}', livello, nome, note]
              for nome, livello, note in voci]
 
     return righe, _doppioni(righe)
@@ -778,19 +768,15 @@ def _note_di_lettura(turni, persone, postazioni):
          f'attuali sono un default ragionevole, non un dato letto.'),
         ('Da compilare', 'T_Persone: presidio e solo_presidio_proprio. '
          'T_Preferenze: tutte le regole.'),
-        ('Livelli che si somigliano', 'presidio: S.G. prende anche le '
-         'aggiuntive del San Giovanni, sede: S.G. solo gli ordinari. '
-         'postazione: ADD. TC prende mattina e pomeriggio, turno: ADD. TC '
-         'mattina solo la mattina. Per questo i due livelli piu ampi '
-         'portano scritto in coda cosa aggiungono.'),
         ('Come si scrive un bersaglio', 'Sempre "livello: nome", per esempio '
          '"sede: S.G." oppure "turno: ADD. TC · mattina". Il pezzo prima dei '
          'due punti dice il livello, quello dopo il nome. Livello e nome '
          'stanno comunque gia separati nelle colonne di T_Bersagli. '
-         'I livelli sono '
-         'fascia, tipologia, presidio, sede, metodica, postazione, turno.'),
+         'I cinque livelli sono '
+         'fascia, tipologia, sede, metodica, turno. Un turno come '
+         'bersaglio e il posto di lavoro, tutte le sue fasce insieme.'),
         ('Ordine della tendina', 'Dal generale al particolare: fasce, tipologie, '
-         'presidi, sedi, metodiche, postazioni, singoli turni.'),
+         'sedi, metodiche, turni.'),
         ('Sedi aggiuntive', 'I turni di una sede con tipologia aggiuntiva '
          'non concorrono al monte turni dovuti e si retribuiscono a parte '
          '(colonne conta_nei_dovuti e pagamento_separato di T_Sedi). Per '
