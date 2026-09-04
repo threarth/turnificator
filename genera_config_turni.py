@@ -233,7 +233,7 @@ def leggi_turni(ws):
             spento = _e_segnaposto(metodica) or _e_segnaposto(sigla)
 
             turni.append({
-                'nome': nome,
+                'nome_visualizzato': nome,
                 'postazione': _postazione_di(nome),
                 'sede': _sede_di(nome),
                 'metodica': '' if _e_segnaposto(metodica) else metodica,
@@ -383,20 +383,11 @@ def costruisci_bersagli(turni):
              for metodica in sorted({t['metodica'] for t in turni
                                      if t['metodica']})]
 
-    # Un turno come bersaglio e' il posto di lavoro, non la singola
-    # fascia: «mai il TC del San Giovanni» vale mattina e pomeriggio. Chi
-    # volesse la sola mattina scrive due regole, ma non e' mai servito.
-    viste = set()
-    for turno in turni:
-        if turno['postazione'] in viste:
-            continue
-
-        viste.add(turno['postazione'])
-        fasce = sorted({t['fascia'] for t in turni
-                        if t['postazione'] == turno['postazione']})
-        voci.append((turno['postazione'], 'turno',
-                     f"{turno['sede']} · {turno['metodica']} · "
-                     f"{' e '.join(fasce)}"))
+    # Il bersaglio di livello turno e' la singola fascia: servono regole
+    # che distinguano il DEA 1 della mattina da quello del pomeriggio.
+    voci += [(turno['etichetta'], 'turno',
+              f"{turno['sede']} · {turno['metodica']} · {turno['fascia']}")
+             for turno in turni]
 
     righe = [[f'{livello}{SEPARATORE_LIVELLO}{nome}', livello, nome, note]
              for nome, livello, note in voci]
@@ -651,7 +642,8 @@ def scrivi_definizioni(wb, turni):
 
 def scrivi_turni(wb, turni):
     """La tabella dei turni, con le tendine sulle colonne vincolate."""
-    campi = ('id', 'etichetta', 'nome', 'postazione', 'sede', 'metodica',
+    campi = ('id', 'etichetta', 'nome_visualizzato', 'postazione',
+             'sede', 'metodica',
              'fascia', 'sigla', 'riempimento', 'necessita', 'giorni',
              'festivi', 'superfestivi', 'ordine', 'attivo')
 
@@ -774,7 +766,8 @@ def _note_di_lettura(turni, persone, postazioni):
          'stanno comunque gia separati nelle colonne di T_Bersagli. '
          'I cinque livelli sono '
          'fascia, tipologia, sede, metodica, turno. Un turno come '
-         'bersaglio e il posto di lavoro, tutte le sue fasce insieme.'),
+         'bersaglio e una fascia sola: S.G. DEA 1 mattina e S.G. DEA 1 '
+         'pomeriggio si escludono separatamente.'),
         ('Ordine della tendina', 'Dal generale al particolare: fasce, tipologie, '
          'sedi, metodiche, turni.'),
         ('Sedi aggiuntive', 'I turni di una sede con tipologia aggiuntiva '
@@ -868,8 +861,43 @@ GRIGIO_INTESTAZIONE = 'FFF2F2F2'
 MESI = ('gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
         'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre')
 
-LARGHEZZA_GIORNO = 6
-LARGHEZZA_ETICHETTA = 30
+# Le sezioni della griglia, nell'ordine e con i colori del modello
+# originale: (titolo, tipologia della sede, fascia, colore del titolo,
+# colore della colonna dei nomi).
+SEZIONI = (
+    ('MATTINA',               'ordinario',  'mattina',    'FFFFC000',
+     'FF4472C4'),
+    ('POMERIGGIO',            'ordinario',  'pomeriggio', 'FF70AD47',
+     'FF4472C4'),
+    ('NOTTE',                 'ordinario',  'notte',      'FF4472C4',
+     'FF5B9BD5'),
+    ('AGGIUNTIVA MATTINA',    'aggiuntiva', 'mattina',    'FFFFC000',
+     'FFFFC000'),
+    ('AGGIUNTIVA POMERIGGIO', 'aggiuntiva', 'pomeriggio', 'FF4472C4',
+     'FFFEE2E8'),
+)
+
+# Il titolo di sezione si ripete tre volte in orizzontale, come
+# nell'originale: cosi' resta leggibile anche scorrendo a meta' mese.
+BANDE_TITOLO = 3
+
+# Misure prese dal modello: colonne, altezze, corpi dei caratteri.
+LARGHEZZA_SIGLA = 12
+LARGHEZZA_NOME = 19.7
+LARGHEZZA_GIORNO = 8.7
+ALTEZZA_TITOLO = 15.75
+ALTEZZA_RIGA = 13.8
+ALTEZZA_SPAZIATORE = 5.25
+
+# Le prime tre righe sono testata e spaziatore: i dati partono dopo.
+PRIMA_RIGA_DATI = 4
+CORPO_GRIGLIA = 8
+CORPO_NOME = 10
+CORPO_TITOLO = 12
+CORPO_INTESTAZIONE = 9
+FORMATO_MESE = 'mmmm yyyy'
+FORMATO_GIORNO = 'dd'
+
 
 
 def calcola_pasqua(anno):
@@ -962,41 +990,111 @@ def turno_aperto(turno, data, festivita):
     return True
 
 
-def _intesta_calendario(ws, giorni, festivita, prima_colonna):
-    """Scrive le tre righe di testata: numero, iniziale, festivita'."""
-    grassetto = openpyxl.styles.Font(bold=True)
+def _bordo_sottile():
+    """Il riquadro sottile che il modello usa su tutte le celle."""
+    lato = openpyxl.styles.Side(style='thin')
+
+    return openpyxl.styles.Border(left=lato, right=lato,
+                                  top=lato, bottom=lato)
+
+
+def _intesta_calendario(ws, giorni, festivita, prima_colonna, etichetta):
+    """
+    Le due righe di testata: le date e i giorni della settimana.
+
+    Ricalca il modello: il mese scritto per esteso a sinistra, le date in
+    formato `dd`, le iniziali dei giorni sotto, tutto incorniciato e
+    centrato. Le colonne di domenica e festivita' si colorano, come li'.
+
+    Args:
+        ws: il foglio.
+        giorni (list): le date del mese.
+        festivita (dict): le date festive dell'anno.
+        prima_colonna (int): colonna della prima data.
+        etichetta (str): cosa scrivere nella prima colonna.
+    """
+    bordo = _bordo_sottile()
     centrato = openpyxl.styles.Alignment(horizontal='center')
+    giallo = openpyxl.styles.PatternFill('solid', fgColor=GIALLO_FESTIVO)
+
+    intestazione = ws.cell(1, prima_colonna - 1, giorni[0])
+    intestazione.number_format = FORMATO_MESE
+    intestazione.font = openpyxl.styles.Font(bold=True,
+                                             size=CORPO_INTESTAZIONE)
+    intestazione.alignment = centrato
+    intestazione.border = bordo
+
+    sotto = ws.cell(2, prima_colonna - 1, etichetta)
+    sotto.font = openpyxl.styles.Font(bold=True, size=CORPO_INTESTAZIONE)
+    sotto.alignment = centrato
+    sotto.border = bordo
 
     for scarto, data in enumerate(giorni):
         colonna = prima_colonna + scarto
         festivo = data.weekday() == DOMENICA or data in festivita
 
-        for riga, valore in ((1, data.day),
-                             (2, INIZIALI_GIORNI[data.weekday()]),
-                             (3, festivita.get(data, ''))):
+        for riga, valore, formato in (
+                (1, data, FORMATO_GIORNO),
+                (2, INIZIALI_GIORNI[data.weekday()], 'General')):
             cella = ws.cell(riga, colonna, valore)
-            cella.font = grassetto
+            cella.number_format = formato
+            cella.font = openpyxl.styles.Font(size=CORPO_GRIGLIA)
             cella.alignment = centrato
+            cella.border = bordo
             if festivo:
-                cella.fill = openpyxl.styles.PatternFill(
-                    'solid', fgColor=GIALLO_FESTIVO)
+                cella.fill = giallo
 
         ws.column_dimensions[get_column_letter(colonna)].width = \
             LARGHEZZA_GIORNO
 
+    ws.row_dimensions[3].height = ALTEZZA_SPAZIATORE
+
+
+def _scrivi_titolo_sezione(ws, riga, titolo, colore, prima_colonna, giorni):
+    """
+    La banda che apre una sezione, ripetuta in orizzontale come nel modello.
+
+    Args:
+        ws: il foglio.
+        riga (int): la riga della banda.
+        titolo (str): il testo, es. `MATTINA`.
+        colore (str): colore di riempimento in formato aRGB.
+        prima_colonna (int): colonna della prima data.
+        giorni (int): quante colonne di date ci sono.
+    """
+    larghezza = giorni // BANDE_TITOLO
+    riempimento = openpyxl.styles.PatternFill('solid', fgColor=colore)
+    ws.row_dimensions[riga].height = ALTEZZA_TITOLO
+
+    for banda in range(BANDE_TITOLO):
+        da = prima_colonna - 1 + banda * larghezza
+        # L'ultima banda si prende le colonne avanzate dalla divisione.
+        a = (prima_colonna - 1 + giorni if banda == BANDE_TITOLO - 1
+             else da + larghezza - 1)
+
+        cella = ws.cell(riga, da, titolo)
+        cella.fill = riempimento
+        cella.font = openpyxl.styles.Font(bold=True, size=CORPO_TITOLO)
+        cella.alignment = openpyxl.styles.Alignment(horizontal='center')
+        ws.merge_cells(start_row=riga, start_column=da,
+                       end_row=riga, end_column=a)
+
+
+def _tipologia_per_sede():
+    """Da codice di sede a tipologia, per sapere se un turno e' aggiuntivo."""
+    return {sede[0]: sede[3] for sede in SEDI}
+
 
 def scrivi_calendario(wb, turni, mese, anno, festivita):
     """
-    La griglia dei turni: una riga per turno aperto, una colonna per giorno.
+    La griglia dei turni, nella veste del modello originale.
 
-    E' qui che sparisce la geometria fissa dell'originale. Le righe non sono
-    piu' cablate — "mattina dalla 22 alla 39" — ma generate da T_Turni
-    nell'ordine della colonna `ordine`, saltando i turni spenti. Aggiungere
-    un turno significa aggiungere una riga alla tabella, non rifare tre
-    fogli.
+    Le righe non sono piu' cablate — "mattina dalla 22 alla 39" — ma
+    generate da T_Turni, raggruppate nelle stesse sezioni del modello e
+    ordinate per la colonna `ordine`. Aggiungere un turno significa
+    aggiungere una riga alla tabella.
 
-    Le celle grigie sono chiuse: quel turno, quel giorno, non si copre. Il
-    solver scrive solo nelle celle bianche.
+    Le celle grigie sono chiuse: quel turno, quel giorno, non si copre.
 
     Args:
         wb: cartella di lavoro di destinazione.
@@ -1005,50 +1103,103 @@ def scrivi_calendario(wb, turni, mese, anno, festivita):
         festivita (dict): le date festive dell'anno.
 
     Returns:
-        Il foglio creato.
+        tuple: (foglio, numero di celle da coprire).
     """
     ws = wb.create_sheet('Calendario')
     giorni = _giorni_del_mese(mese, anno)
     prima_colonna = 3
 
-    _intesta_calendario(ws, giorni, festivita, prima_colonna)
-    ws.cell(1, 1, 'id').font = openpyxl.styles.Font(bold=True)
-    ws.cell(1, 2, f'{MESI[mese - 1].upper()} {anno}').font = \
-        openpyxl.styles.Font(bold=True)
-    ws.column_dimensions['A'].width = 6
-    ws.column_dimensions['B'].width = LARGHEZZA_ETICHETTA
+    _intesta_calendario(ws, giorni, festivita, prima_colonna,
+                        'Giorni Settimana')
+    ws.column_dimensions['A'].width = LARGHEZZA_SIGLA
+    ws.column_dimensions['B'].width = LARGHEZZA_NOME
 
-    grigio = openpyxl.styles.PatternFill('solid', fgColor=GRIGIO_CHIUSO)
+    tipologie = _tipologia_per_sede()
+    riga = PRIMA_RIGA_DATI
     aperte = 0
 
-    for scarto, turno in enumerate(t for t in turni if t['attivo'] == 'SI'):
-        riga = 4 + scarto
-        ws.cell(riga, 1, turno['id'])
-        ws.cell(riga, 2, turno['etichetta'])
+    for titolo, tipologia, fascia, colore_titolo, colore_nome in SEZIONI:
+        della_sezione = [t for t in turni
+                         if t['attivo'] == 'SI' and t['fascia'] == fascia
+                         and tipologie.get(t['sede']) == tipologia]
+        if not della_sezione:
+            continue
+
+        _scrivi_titolo_sezione(ws, riga, titolo, colore_titolo,
+                               prima_colonna, len(giorni))
+        riga += 1
+        aperte += _scrivi_righe_turno(ws, della_sezione, riga, giorni,
+                                      festivita, prima_colonna, colore_nome)
+        riga += len(della_sezione)
+
+    ws.freeze_panes = (f'{get_column_letter(prima_colonna)}'
+                       f'{PRIMA_RIGA_DATI}')
+    aggiungi_tendina(ws, [get_column_letter(prima_colonna + scarto)
+                          for scarto in range(len(giorni))],
+                     'elenco_persone',
+                     PRIMA_RIGA_DATI, riga)
+
+    return ws, aperte
+
+
+def _scrivi_righe_turno(ws, turni, prima_riga, giorni, festivita,
+                        prima_colonna, colore_nome):
+    """
+    Le righe di una sezione: sigla, nome del turno e celle del mese.
+
+    Args:
+        ws: il foglio.
+        turni (list): i turni della sezione, in ordine.
+        prima_riga (int): riga da cui partire.
+        giorni (list): le date del mese.
+        festivita (dict): le date festive.
+        prima_colonna (int): colonna della prima data.
+        colore_nome (str): riempimento della colonna dei nomi.
+
+    Returns:
+        int: quante celle sono aperte in queste righe.
+    """
+    bordo = _bordo_sottile()
+    centrato = openpyxl.styles.Alignment(horizontal='center')
+    grigio = openpyxl.styles.PatternFill('solid', fgColor=GRIGIO_CHIUSO)
+    riempimento = openpyxl.styles.PatternFill('solid', fgColor=colore_nome)
+    aperte = 0
+
+    for scarto, turno in enumerate(turni):
+        riga = prima_riga + scarto
+        ws.row_dimensions[riga].height = ALTEZZA_RIGA
+
+        sigla = ws.cell(riga, 1, turno['sigla'])
+        sigla.font = openpyxl.styles.Font(size=CORPO_GRIGLIA)
+        sigla.alignment = centrato
+
+        nome = ws.cell(riga, 2, turno['nome_visualizzato'])
+        nome.fill = riempimento
+        nome.font = openpyxl.styles.Font(bold=True, size=CORPO_NOME)
+        nome.alignment = centrato
+        nome.border = bordo
 
         for indice, data in enumerate(giorni):
             cella = ws.cell(riga, prima_colonna + indice)
+            cella.font = openpyxl.styles.Font(size=CORPO_GRIGLIA)
+            cella.alignment = centrato
+            cella.border = bordo
             if turno_aperto(turno, data, festivita):
                 aperte += 1
             else:
                 cella.fill = grigio
 
-    ws.freeze_panes = ws.cell(4, prima_colonna)
-    ultima = 3 + len({t['id'] for t in turni if t['attivo'] == 'SI'})
-    aggiungi_tendina(ws, [get_column_letter(prima_colonna + i)
-                          for i in range(len(giorni))],
-                     '=elenco_persone', 4, ultima)
-
-    return ws, aperte
+    return aperte
 
 
 def scrivi_desiderata(wb, persone, mese, anno, festivita):
     """
     Le richieste dei lavoratori: una riga per persona, una per giorno.
 
-    E' l'ingresso del solver, insieme alle preferenze: qui sta cosa la
+    E' l'ingresso del solver insieme alle preferenze: qui sta cosa la
     persona ha chiesto per quel giorno preciso, mentre T_Preferenze tiene
-    cio' che vale sempre.
+    cio' che vale sempre. La disposizione ricalca il blocco desiderata del
+    modello: acronimi in colonna B, giorni da C in poi.
 
     Args:
         wb: cartella di lavoro di destinazione.
@@ -1061,22 +1212,42 @@ def scrivi_desiderata(wb, persone, mese, anno, festivita):
     """
     ws = wb.create_sheet('Desiderata')
     giorni = _giorni_del_mese(mese, anno)
-    prima_colonna = 2
+    prima_colonna = 3
 
-    _intesta_calendario(ws, giorni, festivita, prima_colonna)
-    ws.cell(1, 1, 'MEDICO').font = openpyxl.styles.Font(bold=True)
-    ws.column_dimensions['A'].width = 10
+    _intesta_calendario(ws, giorni, festivita, prima_colonna, 'MEDICO')
+    ws.column_dimensions['A'].width = LARGHEZZA_SIGLA
+    ws.column_dimensions['B'].width = LARGHEZZA_NOME
+
+    bordo = _bordo_sottile()
+    centrato = openpyxl.styles.Alignment(horizontal='center')
+    grigio = openpyxl.styles.PatternFill('solid', fgColor=GRIGIO_INTESTAZIONE)
 
     for scarto, persona in enumerate(persone):
-        ws.cell(4 + scarto, 1, persona['acronimo'])
+        riga = PRIMA_RIGA_DATI + scarto
+        ws.row_dimensions[riga].height = ALTEZZA_RIGA
 
-    ultima = 3 + len(persone)
-    ws.freeze_panes = ws.cell(4, prima_colonna)
-    aggiungi_tendina(ws, [get_column_letter(prima_colonna + i)
-                          for i in range(len(giorni))],
-                     '=elenco_richieste', 4, ultima)
+        cella = ws.cell(riga, 2, persona['acronimo'])
+        cella.fill = grigio
+        cella.font = openpyxl.styles.Font(bold=True, size=CORPO_NOME)
+        cella.alignment = centrato
+        cella.border = bordo
+
+        for indice in range(len(giorni)):
+            giorno = ws.cell(riga, prima_colonna + indice)
+            giorno.font = openpyxl.styles.Font(size=CORPO_GRIGLIA)
+            giorno.alignment = centrato
+            giorno.border = bordo
+
+    ultima = PRIMA_RIGA_DATI - 1 + len(persone)
+    ws.freeze_panes = (f'{get_column_letter(prima_colonna)}'
+                       f'{PRIMA_RIGA_DATI}')
+    aggiungi_tendina(ws, [get_column_letter(prima_colonna + scarto)
+                          for scarto in range(len(giorni))],
+                     'elenco_richieste',
+                     PRIMA_RIGA_DATI, ultima)
 
     return ws
+
 
 if __name__ == '__main__':
     main()
