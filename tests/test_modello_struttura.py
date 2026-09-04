@@ -36,7 +36,7 @@ COLONNE = {
 }
 
 
-def _foglio(turni, persone=(), richieste=(), assenze=(), riepilogo=None):
+def _foglio(turni, persone=(), richieste=(), assenze=()):
     """
     Costruisce un modello minimo in memoria.
 
@@ -45,7 +45,6 @@ def _foglio(turni, persone=(), richieste=(), assenze=(), riepilogo=None):
         persone (iterable): (sigla, cognome, nome).
         richieste (iterable): sigle di tutto cio' che si puo' chiedere.
         assenze (iterable): quali di quelle sono assenze.
-        riepilogo (list|None): [(nome colonna, pattern)] da dichiarare.
 
     Returns:
         BytesIO: il file .xlsx.
@@ -70,13 +69,6 @@ def _foglio(turni, persone=(), richieste=(), assenze=(), riepilogo=None):
         ws.cell(2 + i, 18, sigla)
     for i, sigla in enumerate(assenze):
         ws.cell(2 + i, 19, sigla)
-
-    if riepilogo:
-        wr = wb.create_sheet('Riepilogo')
-        for i, (nome, pattern) in enumerate(riepilogo):
-            wr.cell(ms.RIGA_INTESTAZIONI_RIEPILOGO, 3 + i, nome)
-            wr.cell(ms.RIGA_INTESTAZIONI_RIEPILOGO + 2, 3 + i,
-                    f'=COUNTIF($C8:$AG8,"*{pattern}*")')
 
     dati = io.BytesIO()
     wb.save(dati)
@@ -139,39 +131,51 @@ def test_un_foglio_senza_la_tabella_e_un_errore():
 # Le strutture
 # ---------------------------------------------------------------------------
 
-def test_la_stessa_sigla_in_due_fasce_e_una_struttura_sola():
-    """`deaM;` e `deaP;` sono lo stesso posto in due momenti della giornata."""
+def test_la_sede_nel_nome_fa_la_struttura():
+    """
+    La struttura e' il luogo, e lo dice la prima parola del nome. Due
+    metodiche diverse nella stessa sede sono una struttura sola.
+    """
+    letto = ms.leggi_struttura(_foglio({
+        'mattina': [('S.G. DEA 1', 'DEA', 'deaM; '), ('S.G. TC', 'TC', 'tcSGm; '),
+                    ('ADD. TC', 'TC', 'tcADm; ')],
+    }))
+
+    assert [s['nome'] for s in letto['strutture']] == ['S.G.', 'ADD.']
+
+
+def test_la_punteggiatura_della_sede_non_fa_due_strutture():
+    """Nei fogli veri la stessa sede si scrive «ADD.» e «ADD»."""
+    letto = ms.leggi_struttura(_foglio({
+        'mattina': [('ADD. TC', 'TC', 'tcADm; '), ('ADD SUPP. TC', 'TC', 'addSupM')],
+    }))
+
+    assert len(letto['strutture']) == 1
+
+
+def test_un_turno_che_non_nomina_il_luogo_segue_il_suo_posto():
+    """
+    La notte si chiama «NOTTE - 1° med.» e la sede non la dice: la prende
+    dagli altri turni dello stesso posto, che e' la sigla senza la fascia.
+    """
     letto = ms.leggi_struttura(_foglio({
         'mattina':    [('S.G. DEA 1', 'DEA', 'deaM; ')],
         'pomeriggio': [('S.G. DEA 1 P', 'DEA', 'deaP; ')],
-        'notte':      [('NOTTE 1', 'DEANOTTE', 'deaN')],
+        'notte':      [('NOTTE - 1 med.', 'DEANOTTE', 'deaN')],
     }))
 
-    assert [s['nome'] for s in letto['strutture']] == ['DEA']
-    assert {t['struttura'] for t in letto['turni']} == {'dea'}
+    assert [s['nome'] for s in letto['strutture']] == ['S.G.']
+    notte = next(t for t in letto['turni'] if t['fascia'] == 'notte')
+    assert notte['struttura_nome'] == 'S.G.'
 
 
-def test_il_riepilogo_detta_i_nomi_delle_strutture():
-    """
-    Il foglio dichiara le proprie strutture: ogni colonna del Riepilogo e' una,
-    e la formula che la riempie dice quali sigle vi appartengono.
-    """
-    letto = ms.leggi_struttura(_foglio(
-        {'mattina': [('ADD. TC', 'TC', 'tcADm; '), ('S.G. TC', 'TC', 'tcSGm; ')]},
-        riepilogo=[('TC S.G.', 'tcSG'), ('TC ADD.', 'tcAD')],
-    ))
-
-    assert sorted(s['nome'] for s in letto['strutture']) == ['TC ADD.', 'TC S.G.']
-
-
-def test_senza_riepilogo_le_strutture_si_ricavano_dalle_sigle():
-    """E l'utente viene avvisato che i nomi sono quelli che sono."""
+def test_un_posto_di_cui_nessun_turno_nomina_il_luogo_resta_a_se():
+    """Senza nessun luogo scritto, la struttura e' la sigla del posto."""
     letto = ms.leggi_struttura(_foglio({
-        'mattina': [('ADD. TC', 'TC', 'tcADm; ')],
+        'mattina': [('Ambulatorio', 'TC', 'ambM; ')],
     }))
 
-    assert [s['nome'] for s in letto['strutture']] == ['TCAD']
-    assert any('Riepilogo' in a for a in letto['avvisi'])
+    assert [s['nome'] for s in letto['strutture']] == ['AMB']
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +246,6 @@ def _modello_di_prova():
         persone=[('ROSSI', 'Rossi', 'Mario'), ('VERDI', 'Verdi', 'Anna')],
         richieste=['CO', 'M', 'P'],
         assenze=['CO'],
-        riepilogo=[('DEA', 'dea'), ('TC ADD.', 'tcAD')],
     )
 
 
@@ -261,7 +264,7 @@ def test_l_analisi_racconta_senza_scrivere(client, admin_token, auth):
     assert rv.status_code == 200, rv.get_json()
 
     corpo = rv.get_json()
-    assert [s['nome'] for s in corpo['strutture']] == ['DEA', 'TC ADD.']
+    assert [s['nome'] for s in corpo['strutture']] == ['S.G.', 'ADD.']
     assert len(corpo['turni']) == 3
     assert [p['sigla'] for p in corpo['persone']] == ['ROSSI', 'VERDI']
 
@@ -300,8 +303,8 @@ def test_applicare_crea_struttura_tipologie_e_persone(client, admin_token, auth)
     assert rv.status_code == 200, rv.get_json()
     sovragruppi = rv.get_json()['struttura']
 
-    assert [sg['nome'] for sg in sovragruppi] == ['DEA', 'TC ADD.']
-    # DEA ha due fasce, TC ADD. una sola: il gruppo nasce dalla fascia.
+    assert [sg['nome'] for sg in sovragruppi] == ['S.G.', 'ADD.']
+    # S.G. ha due fasce, ADD. una sola: il gruppo nasce dalla fascia.
     assert [len(sg['gruppi']) for sg in sovragruppi] == [2, 1]
     nomi_turni = [t['nome'] for sg in sovragruppi for g in sg['gruppi'] for t in g['turni']]
     assert sorted(nomi_turni) == ['ADD. TC', 'S.G. DEA 1', 'S.G. DEA 1 P']
@@ -359,3 +362,63 @@ def test_solo_l_amministratore_importa_una_struttura(client, manager_token, auth
                      headers=auth(manager_token))
 
     assert rv.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Correggere la deduzione
+# ---------------------------------------------------------------------------
+
+def test_rinominare_una_struttura_la_ribattezza():
+    """La sede dedotta dal nome e' una proposta: si corregge."""
+    letto = ms.leggi_struttura(_foglio({
+        'mattina': [('S.G. DEA 1', 'DEA', 'deaM; ')],
+    }))
+
+    ms.rinomina_strutture(letto, {'SG': 'San Giovanni'})
+
+    assert [s['nome'] for s in letto['strutture']] == ['San Giovanni']
+    assert letto['turni'][0]['struttura_nome'] == 'San Giovanni'
+
+
+def test_due_strutture_chiamate_uguale_si_fondono():
+    """E' il modo per dire «questi due sono lo stesso posto»."""
+    letto = ms.leggi_struttura(_foglio({
+        'mattina': [('S.G. DEA 1', 'DEA', 'deaM; '), ('ADD. TC', 'TC', 'tcADm; ')],
+    }))
+    assert len(letto['strutture']) == 2
+
+    ms.rinomina_strutture(letto, {'SG': 'Unica', 'ADD': 'Unica'})
+
+    assert [s['nome'] for s in letto['strutture']] == ['Unica']
+    assert {t['struttura'] for t in letto['turni']} == {'Unica'}
+
+
+def test_una_struttura_non_nominata_resta_com_e():
+    letto = ms.leggi_struttura(_foglio({
+        'mattina': [('S.G. DEA 1', 'DEA', 'deaM; '), ('ADD. TC', 'TC', 'tcADm; ')],
+    }))
+
+    ms.rinomina_strutture(letto, {'SG': 'San Giovanni'})
+
+    assert [s['nome'] for s in letto['strutture']] == ['San Giovanni', 'ADD.']
+
+
+def test_le_correzioni_arrivano_fino_alla_struttura_creata(client, admin_token, auth):
+    """Quello che l'utente scrive nel riquadro e' quello che viene creato."""
+    import json as _json
+
+    rv = client.post('/api/admin/modello/applica',
+                     data={**_allega(_modello_di_prova()),
+                           'nome_preset': 'Con correzioni',
+                           'strutture': _json.dumps({'SG': 'Sede unica',
+                                                     'ADD': 'Sede unica'})},
+                     content_type='multipart/form-data',
+                     headers=auth(admin_token))
+    assert rv.status_code == 201, rv.get_json()
+    assert rv.get_json()['strutture'] == 1
+
+    rv = client.get(f"/api/admin/struttura-presets/{rv.get_json()['preset_id']}/struttura",
+                    headers=auth(admin_token))
+    sovragruppi = rv.get_json()['struttura']
+
+    assert [sg['nome'] for sg in sovragruppi] == ['Sede unica']

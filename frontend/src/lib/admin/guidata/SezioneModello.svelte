@@ -37,6 +37,7 @@
     let letto = null;
     let esito = null;
     let nomePreset = '';
+    let nomiStrutture = {};
     let errore = '';
     let inCorso = false;
 
@@ -57,7 +58,22 @@
         inCorso = false;
 
         if (!r.ok) { errore = r.errore || 'Il foglio non si legge.'; return; }
+
         letto = r;
+        // La sede ricavata dal nome e' una deduzione: si mostra gia' scritta,
+        // pronta da correggere.
+        nomiStrutture = Object.fromEntries(r.strutture.map(s => [s.chiave, s.nome]));
+    }
+
+    /** Quante volte un nome di struttura e' stato scritto: due volte = fusione. */
+    function quanteConQuestoNome(nome) {
+        return Object.values(nomiStrutture)
+            .filter(n => n.trim().toLowerCase() === nome.trim().toLowerCase()).length;
+    }
+
+    /** Quanti turni finiscono in una struttura, per farlo vedere accanto. */
+    function turniDi(chiave) {
+        return letto.turni.filter(t => t.struttura === chiave).length;
     }
 
     async function crea() {
@@ -65,7 +81,7 @@
 
         inCorso = true;
         errore = '';
-        const r = await adminApi.applicaModello(file, nomePreset.trim());
+        const r = await adminApi.applicaModello(file, nomePreset.trim(), nomiStrutture);
         inCorso = false;
 
         if (!r.ok) { errore = r.errore || 'Creazione non riuscita.'; return; }
@@ -174,9 +190,27 @@
             </div></div>
         </div>
 
+        <h6 class="guidata-titolo">Le strutture</h6>
         <p class="guidata-aiuto">
-            <strong>Strutture:</strong> {letto.strutture.map(s => s.nome).join(' · ')}
+            Il luogo è quello scritto in testa al nome del turno: è una
+            deduzione, e puoi correggerla. <strong>Due strutture con lo stesso
+            nome diventano una sola</strong>: è il modo per dire che sono lo
+            stesso posto.
         </p>
+        <div class="row g-2 mb-3">
+            {#each letto.strutture as s (s.chiave)}
+                <div class="col-auto">
+                    <label class="form-label small mb-1" for="stru-{s.chiave}">
+                        {turniDi(s.chiave)} turni
+                        {#if quanteConQuestoNome(nomiStrutture[s.chiave] ?? '') > 1}
+                            <span class="text-primary">· si fonde</span>
+                        {/if}
+                    </label>
+                    <input id="stru-{s.chiave}" class="form-control form-control-sm"
+                           style="width:170px" bind:value={nomiStrutture[s.chiave]} />
+                </div>
+            {/each}
+        </div>
 
         {#if letto.persone_gia_presenti?.length}
             <p class="guidata-aiuto">

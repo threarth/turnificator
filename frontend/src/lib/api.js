@@ -173,8 +173,12 @@ export const adminApi = {
   // Modello Excel: la struttura letta da un foglio di calcolo
   statoModello:    ()     => api.get('/api/admin/modello'),
   analizzaModello: (file) => api.file('/api/admin/modello/analizza', _conFile(file)),
-  applicaModello:  (file, nomePreset) => api.file(
-    '/api/admin/modello/applica', _conFile(file, { nome_preset: nomePreset })
+  applicaModello:  (file, nomePreset, strutture) => api.file(
+    '/api/admin/modello/applica',
+    _conFile(file, {
+      nome_preset: nomePreset,
+      strutture: JSON.stringify(strutture ?? {}),
+    })
   ),
 
   // Festivita' (ricorrenze che rendono festivo un giorno)

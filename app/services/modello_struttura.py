@@ -20,24 +20,31 @@ Cosa si legge:
     colonne N/O/P   le persone: acronimo, cognome, nome
     colonne R/S     i tipi di richiesta: desiderata e assenze
 
-Il raggruppamento in strutture lo dichiara il foglio stesso: il `Riepilogo`
-ha una colonna per struttura, e la formula che la riempie dice quali sigle vi
-appartengono. Dove quel foglio non si legge, si ripiega sulla sigla privata
-del suffisso di fascia — `tcSGm;` e `tcSGp;` sono la stessa struttura.
+La **struttura** e' il luogo, e lo dice la prima parola del nome del turno:
+«S.G. DEA 1», «ADD. TC», «S.M. MX/ECO 1». Non e' la colonna del Riepilogo,
+che incrocia metodica e sede ed e' un'altra cosa.
+
+Ai turni che il luogo non lo nominano — la notte si chiama «NOTTE - 1° med.»
+— la struttura arriva dagli altri turni dello stesso **posto**: `deaM;`,
+`deaP;` e `deaN` sono lo stesso posto in tre momenti della giornata, e se due
+di quei turni stanno a S.G. ci sta anche il terzo.
+
+Resta una deduzione, e come tale si propone: chi importa vede le strutture
+trovate e puo' correggerle o fonderle prima di creare.
 
 Questo modulo **non tocca il database**: legge e descrive. Chi scrive decide
 a parte, dopo aver mostrato all'utente cosa e' stato capito.
 """
 
 import re
+from collections import Counter
 
 import openpyxl
 from openpyxl.utils import column_index_from_string
 
 
-# Il foglio da cui si legge la struttura, e quello che dichiara i gruppi.
+# Il foglio da cui si legge la struttura.
 FOGLIO_TABELLE = 'Tabelle'
-FOGLIO_RIEPILOGO = 'Riepilogo'
 
 # I blocchi di turni, per nome dell'intervallo definito nel foglio. Il modello
 # li dichiara, e sono la stessa cosa che le formule matriciali di
@@ -78,12 +85,6 @@ TIPO_ASSENZA = 'assenza'
 
 # Il segnaposto con cui il foglio riempie le righe non usate.
 SEGNAPOSTO = ('-', '', 'vuoto', 'chiusa', 'chiuso')
-
-# Nel Riepilogo, la riga delle intestazioni delle strutture e quante righe
-# sotto cercare le formule che ne dichiarano il contenuto.
-RIGA_INTESTAZIONI_RIEPILOGO = 52
-RIGHE_FORMULE_RIEPILOGO = 8
-COLONNA_TOTALE = 'TOTALE'
 
 
 def _testo(cella):
@@ -146,87 +147,81 @@ def _chiave_sigla(sigla):
     return re.sub(r'[mpn]$', '', pulita, flags=re.IGNORECASE).lower()
 
 
-def _raggruppamenti_dal_riepilogo(wb_formule):
+def _posto_del_nome(nome):
     """
-    Le strutture come le dichiara il foglio Riepilogo.
+    Il luogo scritto in testa al nome di un turno.
 
-    Ogni colonna e' una struttura, e la formula che la riempie elenca le
-    sigle che vi appartengono: `COUNTIF(...,"*tcSG*")` dice che tutto cio'
-    che contiene `tcSG` e' di quella struttura. Serve la cartella aperta
-    **con le formule**: a valori si leggerebbe il numero, non la regola.
+    «S.G. DEA 1», «ADD. TC», «S.M. MX/ECO 1»: la prima parola dice la sede, ed
+    e' quella che distingue una struttura dall'altra. Un nome di una parola
+    sola non nomina nessun luogo.
 
     Args:
-        wb_formule: cartella di lavoro aperta con data_only=False.
+        nome (str): nome del turno.
 
     Returns:
-        list: [(nome, [pattern in minuscolo])], vuota se il foglio non c'e'.
+        tuple: (chiave confrontabile, forma da mostrare); vuote se non c'e'.
     """
-    if FOGLIO_RIEPILOGO not in wb_formule.sheetnames:
-        return []
+    pezzi = nome.split()
+    if len(pezzi) < 2:
+        return '', ''
 
-    ws = wb_formule[FOGLIO_RIEPILOGO]
-    gruppi = []
+    primo = pezzi[0].strip()
 
-    for c in range(1, ws.max_column + 1):
-        nome = ' '.join(_testo(ws.cell(RIGA_INTESTAZIONI_RIEPILOGO, c)).split())
-        if not nome or nome.upper() == COLONNA_TOTALE:
+    return ''.join(c for c in primo.upper() if c.isalnum()), primo
+
+
+def _strutture_dei_posti(righe):
+    """
+    A quale struttura appartiene ciascun posto di lavoro.
+
+    Un "posto" e' la sigla senza il suffisso di fascia: `deaM;` e `deaN` sono
+    lo stesso posto in due momenti della giornata. La struttura del posto e'
+    il luogo che compare piu' spesso nei nomi dei suoi turni — cosi' la notte,
+    che si chiama «NOTTE - 1° med.» e la sede non la nomina, finisce dove
+    stanno gli altri turni dello stesso posto.
+
+    Args:
+        righe (list): [(sigla, nome)] di tutti i turni letti.
+
+    Returns:
+        dict: chiave del posto → (chiave struttura, nome da mostrare).
+    """
+    per_posto = {}
+    for sigla, nome in righe:
+        per_posto.setdefault(_chiave_sigla(sigla), []).append(_posto_del_nome(nome))
+
+    strutture = {}
+    for posto, luoghi in per_posto.items():
+        nominati = [l for l in luoghi if l[0]]
+        if not nominati:
+            strutture[posto] = (posto.upper(), posto.upper())
             continue
 
-        for r in range(RIGA_INTESTAZIONI_RIEPILOGO + 1,
-                       RIGA_INTESTAZIONI_RIEPILOGO + 1 + RIGHE_FORMULE_RIEPILOGO):
-            formula = _testo(ws.cell(r, c))
-            if 'COUNTIF' not in formula.upper():
-                continue
-            pattern = [p.lower() for p in re.findall(r'"\*([^"*]+)\*"', formula)]
-            if pattern:
-                gruppi.append((nome, pattern))
-            break
+        vincitore = Counter(chiave for chiave, _ in nominati).most_common(1)[0][0]
+        mostrato = next(m for c, m in nominati if c == vincitore)
+        strutture[posto] = (vincitore, mostrato)
 
-    return gruppi
+    return strutture
 
 
-def _struttura_di(sigla, raggruppamenti):
+def _righe_turni(wb, ws):
     """
-    A quale struttura appartiene un turno, data la sua sigla.
-
-    Args:
-        sigla (str): sigla del turno nel foglio.
-        raggruppamenti (list): [(nome, [pattern])] dal Riepilogo.
-
-    Returns:
-        tuple: (chiave, nome) della struttura.
-    """
-    pulita = sigla.strip().rstrip(';').strip().lower()
-
-    for nome, pattern in raggruppamenti:
-        if any(p in pulita for p in pattern):
-            return nome, nome
-
-    chiave = _chiave_sigla(sigla)
-
-    return chiave, chiave.upper()
-
-
-def _leggi_turni(wb, ws, raggruppamenti):
-    """
-    I turni del foglio, nell'ordine in cui la griglia li dispone.
+    Le righe di turno del foglio, nell'ordine in cui la griglia le dispone.
 
     Args:
         wb: cartella di lavoro, per gli intervalli nominati.
         ws: foglio Tabelle, a valori.
-        raggruppamenti (list): strutture dichiarate dal Riepilogo.
 
     Returns:
-        tuple: (lista di turni, lista di avvisi).
+        tuple: (lista di righe grezze, lista di avvisi).
     """
-    turni = []
+    righe = []
     avvisi = []
 
     for blocco in BLOCCHI_TURNI:
         col_nome, prima, ultima = _intervallo(wb, blocco['nomi'], blocco['ripiego'][:3])
         col_sigla, _, _ = _intervallo(
-            wb, blocco['sigle'],
-            (blocco['ripiego'][3], prima, ultima)
+            wb, blocco['sigle'], (blocco['ripiego'][3], prima, ultima)
         )
 
         for r in range(prima, ultima + 1):
@@ -242,15 +237,43 @@ def _leggi_turni(wb, ws, raggruppamenti):
                 )
                 continue
 
-            chiave, nome_struttura = _struttura_di(sigla, raggruppamenti)
-            turni.append({
+            righe.append({
                 'nome': nome,
+                'sigla': sigla,
                 'fascia': blocco['fascia'],
-                'struttura': chiave,
-                'struttura_nome': nome_struttura,
                 'tipologia': _testo(ws.cell(r, col_nome + SCARTO_COLONNA_TIPOLOGIA)),
-                'ordine': len(turni),
             })
+
+    return righe, avvisi
+
+
+def _leggi_turni(wb, ws):
+    """
+    I turni del foglio, ciascuno con la struttura a cui appartiene.
+
+    Args:
+        wb: cartella di lavoro.
+        ws: foglio Tabelle.
+
+    Returns:
+        tuple: (lista di turni, lista di avvisi).
+    """
+    righe, avvisi = _righe_turni(wb, ws)
+    strutture = _strutture_dei_posti([(r['sigla'], r['nome']) for r in righe])
+
+    turni = []
+    for r in righe:
+        posto = _chiave_sigla(r['sigla'])
+        chiave, nome_struttura = strutture[posto]
+        turni.append({
+            'nome': r['nome'],
+            'fascia': r['fascia'],
+            'posto': posto,
+            'struttura': chiave,
+            'struttura_nome': nome_struttura,
+            'tipologia': r['tipologia'],
+            'ordine': len(turni),
+        })
 
     return turni, avvisi
 
@@ -307,6 +330,47 @@ def _leggi_tipi_richiesta(wb, ws):
     ]
 
 
+def rinomina_strutture(letto, rinomina):
+    """
+    Applica le correzioni dell'utente alle strutture dedotte.
+
+    La sede ricavata dal nome e' una deduzione, e chi importa deve poterla
+    correggere: rinominare due strutture allo stesso modo **le fonde**, ed e'
+    il modo per dire «queste due sono lo stesso posto».
+
+    Args:
+        letto (dict): esito di leggi_struttura(), modificato sul posto.
+        rinomina (dict): chiave della struttura → nome scelto. Le chiavi
+                         assenti restano come sono.
+
+    Returns:
+        dict: lo stesso `letto`, con strutture e turni riallineati.
+    """
+    if not rinomina:
+        return letto
+
+    def scelto(chiave, corrente):
+        nuovo_nome = (rinomina.get(chiave) or '').strip()
+        return nuovo_nome or corrente
+
+    for turno in letto['turni']:
+        nome = scelto(turno['struttura'], turno['struttura_nome'])
+        turno['struttura'] = nome
+        turno['struttura_nome'] = nome
+
+    strutture = []
+    viste = set()
+    for turno in letto['turni']:
+        if turno['struttura'] not in viste:
+            viste.add(turno['struttura'])
+            strutture.append({
+                'chiave': turno['struttura'], 'nome': turno['struttura_nome'],
+            })
+    letto['strutture'] = strutture
+
+    return letto
+
+
 def leggi_struttura(sorgente):
     """
     Legge da un modello Excel tutto cio' che serve a costruire la struttura.
@@ -320,12 +384,7 @@ def leggi_struttura(sorgente):
     Raises:
         ValueError: il foglio non ha la tabella da cui si legge la struttura.
     """
-    # Due letture dello stesso file: i valori servono per le tabelle, le
-    # formule per capire come il Riepilogo raggruppa le strutture.
     wb = openpyxl.load_workbook(sorgente, data_only=True)
-    if hasattr(sorgente, 'seek'):
-        sorgente.seek(0)
-    wb_formule = openpyxl.load_workbook(sorgente, data_only=False)
 
     if FOGLIO_TABELLE not in wb.sheetnames:
         raise ValueError(
@@ -334,8 +393,7 @@ def leggi_struttura(sorgente):
         )
 
     ws = wb[FOGLIO_TABELLE]
-    raggruppamenti = _raggruppamenti_dal_riepilogo(wb_formule)
-    turni, avvisi = _leggi_turni(wb, ws, raggruppamenti)
+    turni, avvisi = _leggi_turni(wb, ws)
 
     if not turni:
         raise ValueError('Nel foglio non ho trovato nessun turno.')
@@ -353,12 +411,6 @@ def leggi_struttura(sorgente):
         if t['tipologia'] and not _e_segnaposto(t['tipologia']) \
                 and t['tipologia'] not in tipologie:
             tipologie.append(t['tipologia'])
-
-    if not raggruppamenti:
-        avvisi.append(
-            'Il foglio Riepilogo non dichiara le strutture: le ho ricavate '
-            'dalle sigle dei turni, e i nomi sono quelli.'
-        )
 
     return {
         'strutture': strutture,

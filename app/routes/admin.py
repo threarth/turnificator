@@ -100,7 +100,7 @@ from app.services.fasce_orarie import (
     NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
     FormatoOrarioNonValido, parse_orario, ricalcola_tutte
 )
-from app.services.modello_struttura import leggi_struttura
+from app.services.modello_struttura import leggi_struttura, rinomina_strutture
 from app.services.validatori import TIPI_REGOLA
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -3592,6 +3592,8 @@ def applica_modello():
     Form multipart:
         file (file): il foglio.
         nome_preset (str): come chiamare la struttura turni.
+        strutture (str): JSON {chiave: nome}, per correggere le sedi dedotte
+                         dal foglio. Due nomi uguali fondono due strutture.
     """
     nome_file, contenuto, errore = _modello_dalla_richiesta()
     if errore:
@@ -3609,6 +3611,15 @@ def applica_modello():
         letto = leggi_struttura(io.BytesIO(contenuto))
     except ValueError as e:
         return jsonify({'ok': False, 'errore': str(e)}), 400
+
+    try:
+        rinomina = json.loads(request.form.get('strutture') or '{}')
+    except json.JSONDecodeError:
+        return jsonify({'ok': False, 'errore': 'Correzioni alle strutture illeggibili.'}), 400
+    if not isinstance(rinomina, dict):
+        return jsonify({'ok': False, 'errore': 'Correzioni alle strutture illeggibili.'}), 400
+
+    letto = rinomina_strutture(letto, rinomina)
 
     preset_id, errore = _crea_struttura_turni(nome_preset, letto)
     if errore:
