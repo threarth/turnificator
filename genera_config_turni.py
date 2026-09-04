@@ -154,6 +154,14 @@ SEPARATORE_ETICHETTA = ' · '
 # Come si scrive il livello davanti al bersaglio: `sede: S.G.`.
 SEPARATORE_LIVELLO = ': '
 
+# Due livelli si leggono uguali agli altri se non si dice cosa aggiungono:
+# `presidio: S.G.` sembra `sede: S.G.` ma prende anche le aggiuntive, e
+# `postazione: ADD. TC` sembra il turno ma prende tutte le fasce.
+QUALIFICATORI = {
+    'presidio':   ' — ordinari e aggiuntivi',
+    'postazione': ' — ogni fascia',
+}
+
 PASSO_ORDINE = 10
 STILE_TABELLA = 'TableStyleMedium2'
 LARGHEZZA_MASSIMA = 42
@@ -399,7 +407,8 @@ def costruisci_bersagli(turni):
               f"{t['sede']} · {t['metodica']} · {t['fascia']}")
              for t in turni]
 
-    righe = [[f'{livello}{SEPARATORE_LIVELLO}{nome}', livello, nome, note]
+    righe = [[f'{livello}{SEPARATORE_LIVELLO}{nome}'
+              f'{QUALIFICATORI.get(livello, "")}', livello, nome, note]
              for nome, livello, note in voci]
 
     return righe, _doppioni(righe)
@@ -508,8 +517,11 @@ def aggiungi_tendina(ws, colonne, sorgente, prima_riga, ultima_riga):
         prima_riga (int): prima riga di dati.
         ultima_riga (int): ultima riga da vincolare.
     """
+    # Excel scrive la sorgente senza l'uguale davanti — si vede nelle
+    # validazioni del modello originale — e con l'uguale la tendina non
+    # si apre. Lo si toglie qui invece che a ogni chiamata.
     validazione = DataValidation(
-        type='list', formula1=sorgente, allowBlank=True,
+        type='list', formula1=sorgente.lstrip('='), allowBlank=True,
         showErrorMessage=True, errorTitle='Valore non ammesso',
         error='Scegli una voce dal menu a tendina.')
     ws.add_data_validation(validazione)
@@ -518,8 +530,28 @@ def aggiungi_tendina(ws, colonne, sorgente, prima_riga, ultima_riga):
         validazione.add(f'{colonna}{prima_riga}:{colonna}{ultima_riga}')
 
 
+def _intervallo_dinamico(foglio):
+    """
+    Un riferimento che copre la prima colonna di un foglio, intestazione
+    esclusa, e si allunga da solo quando si aggiungono righe.
+
+    Si potrebbe scrivere `T_Tabella[colonna]`, che e' piu' leggibile, ma
+    non tutte le versioni di Excel accettano un riferimento strutturato
+    come sorgente di una validazione. OFFSET con COUNTA le accontenta
+    tutte.
+
+    Args:
+        foglio (str): nome del foglio.
+
+    Returns:
+        str: la formula del nome definito.
+    """
+    return (f"OFFSET({foglio}!$A$2,0,0,"
+            f"COUNTA({foglio}!$A:$A)-1,1)")
+
+
 def registra_nome(wb, nome, riferimento):
-    """Dichiara un nome definito che punta a una colonna di Tabella."""
+    """Dichiara un nome definito utilizzabile come sorgente di tendina."""
     wb.defined_names[nome] = DefinedName(nome, attr_text=riferimento)
 
 
@@ -746,9 +778,16 @@ def _note_di_lettura(turni, persone, postazioni):
          f'attuali sono un default ragionevole, non un dato letto.'),
         ('Da compilare', 'T_Persone: presidio e solo_presidio_proprio. '
          'T_Preferenze: tutte le regole.'),
+        ('Livelli che si somigliano', 'presidio: S.G. prende anche le '
+         'aggiuntive del San Giovanni, sede: S.G. solo gli ordinari. '
+         'postazione: ADD. TC prende mattina e pomeriggio, turno: ADD. TC '
+         'mattina solo la mattina. Per questo i due livelli piu ampi '
+         'portano scritto in coda cosa aggiungono.'),
         ('Come si scrive un bersaglio', 'Sempre "livello: nome", per esempio '
          '"sede: S.G." oppure "turno: ADD. TC · mattina". Il pezzo prima dei '
-         'due punti dice il livello, quello dopo il nome. I livelli sono '
+         'due punti dice il livello, quello dopo il nome. Livello e nome '
+         'stanno comunque gia separati nelle colonne di T_Bersagli. '
+         'I livelli sono '
          'fascia, tipologia, presidio, sede, metodica, postazione, turno.'),
         ('Ordine della tendina', 'Dal generale al particolare: fasce, tipologie, '
          'presidi, sedi, metodiche, postazioni, singoli turni.'),
@@ -795,14 +834,14 @@ def main():
     _, celle_aperte = scrivi_calendario(wb, turni, mese, anno, festivita)
     scrivi_desiderata(wb, persone, mese, anno, festivita)
 
-    for nome, colonna in (('elenco_bersagli', 'T_Bersagli[bersaglio]'),
-                          ('elenco_persone', 'T_Persone[acronimo]'),
-                          ('elenco_sedi', 'T_Sedi[codice]'),
-                          ('elenco_presidi', 'T_Presidi[codice]'),
-                          ('elenco_metodiche', 'T_Metodiche[metodica]'),
-                          ('elenco_fasce', 'T_Fasce[fascia]'),
-                          ('elenco_richieste', 'T_Richieste[sigla]')):
-        registra_nome(wb, nome, colonna)
+    for nome, foglio in (('elenco_bersagli', 'Bersagli'),
+                         ('elenco_persone', 'Persone'),
+                         ('elenco_sedi', 'Sedi'),
+                         ('elenco_presidi', 'Presidi'),
+                         ('elenco_metodiche', 'Metodiche'),
+                         ('elenco_fasce', 'Fasce'),
+                         ('elenco_richieste', 'Richieste')):
+        registra_nome(wb, nome, _intervallo_dinamico(foglio))
 
     postazioni = len({turno['postazione'] for turno in turni})
     scrivi_leggimi(wb, _note_di_lettura(turni, persone, postazioni))
