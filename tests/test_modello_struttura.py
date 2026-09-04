@@ -18,6 +18,8 @@ import os
 import openpyxl
 import pytest
 
+from tests.conftest import _open_sqlcipher
+
 
 _PERCORSO = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -343,18 +345,6 @@ def test_il_foglio_resta_nel_tenant(client, admin_token, auth):
     assert modello['byte'] > 0
 
 
-def test_due_strutture_turni_non_possono_chiamarsi_uguale(client, admin_token, auth):
-    client.post('/api/admin/modello/applica',
-                data={**_allega(_modello_di_prova()), 'nome_preset': 'Unico'},
-                content_type='multipart/form-data', headers=auth(admin_token))
-
-    rv = client.post('/api/admin/modello/applica',
-                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Unico'},
-                     content_type='multipart/form-data', headers=auth(admin_token))
-
-    assert rv.status_code == 409
-
-
 def test_solo_l_amministratore_importa_una_struttura(client, manager_token, auth):
     rv = client.post('/api/admin/modello/analizza',
                      data=_allega(_modello_di_prova()),
@@ -422,3 +412,107 @@ def test_le_correzioni_arrivano_fino_alla_struttura_creata(client, admin_token, 
     sovragruppi = rv.get_json()['struttura']
 
     assert [sg['nome'] for sg in sovragruppi] == ['Sede unica']
+
+
+# ---------------------------------------------------------------------------
+# Una struttura sola per organizzazione
+# ---------------------------------------------------------------------------
+
+def _strutture_del_tenant(client, admin_token, auth):
+    return client.get('/api/admin/struttura-presets',
+                      headers=auth(admin_token)).get_json()['presets']
+
+
+def test_importare_due_volte_non_lascia_due_strutture(client, admin_token, auth):
+    """
+    L'organizzazione ha una struttura sola: il secondo import sostituisce il
+    primo, non gli si affianca.
+    """
+    prima = len(_strutture_del_tenant(client, admin_token, auth))
+
+    for nome in ('Primo giro', 'Secondo giro'):
+        rv = client.post('/api/admin/modello/applica',
+                         data={**_allega(_modello_di_prova()), 'nome_preset': nome},
+                         content_type='multipart/form-data',
+                         headers=auth(admin_token))
+        assert rv.status_code == 201, rv.get_json()
+
+    dopo = _strutture_del_tenant(client, admin_token, auth)
+    assert len(dopo) == prima
+    assert rv.get_json()['sostituita'] is True
+
+
+def test_la_struttura_importata_diventa_quella_dell_organizzazione(client, admin_token, auth):
+    """Senza il segno di predefinita, il calendario non saprebbe quale usare."""
+    rv = client.post('/api/admin/modello/applica',
+                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     content_type='multipart/form-data',
+                     headers=auth(admin_token))
+    preset_id = rv.get_json()['preset_id']
+
+    strutture = _strutture_del_tenant(client, admin_token, auth)
+    predefinite = [p for p in strutture if p['is_default']]
+
+    assert [p['id'] for p in predefinite] == [preset_id]
+
+
+def test_il_calendario_non_chiede_quale_struttura(client, admin_token, auth):
+    """Ce n'e' una sola: chiederlo sarebbe una domanda senza alternative."""
+    client.post('/api/admin/modello/applica',
+                data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                content_type='multipart/form-data', headers=auth(admin_token))
+
+    rv = client.post('/api/admin/calendari', json={'mese': 3, 'anno': 2028},
+                     headers=auth(admin_token))
+
+    assert rv.status_code == 201, rv.get_json()
+
+
+def test_i_turni_importati_finiscono_nel_calendario(client, admin_token, auth):
+    """La struttura del foglio e' quella con cui si costruisce il mese."""
+    client.post('/api/admin/modello/applica',
+                data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                content_type='multipart/form-data', headers=auth(admin_token))
+
+    rv = client.post('/api/admin/calendari', json={'mese': 4, 'anno': 2028},
+                     headers=auth(admin_token))
+    cal_id = rv.get_json()['id']
+
+    rv = client.get(f'/api/manager/calendari/{cal_id}/struttura',
+                    headers=auth(admin_token))
+    sovragruppi = rv.get_json()['sovragruppi']
+
+    assert [sg['nome'] for sg in sovragruppi] == ['S.G.', 'ADD.']
+    nomi = [t['descrizione'] for sg in sovragruppi
+            for g in sg['gruppi'] for t in g['turni']]
+    assert sorted(nomi) == ['ADD. TC', 'S.G. DEA 1', 'S.G. DEA 1 P']
+
+
+def test_senza_predefinita_si_usa_l_ultima_creata(client, admin_token, auth, _test_env):
+    """
+    Un'installazione che ha accumulato strutture prima che la regola
+    esistesse non deve restare senza: si prende l'ultima, e il primo import
+    la marca come quella dell'organizzazione.
+    """
+    client.post('/api/admin/struttura-presets', json={'nome': 'Vecchia A'},
+                headers=auth(admin_token))
+    rv = client.post('/api/admin/struttura-presets', json={'nome': 'Vecchia B'},
+                     headers=auth(admin_token))
+    ultima = rv.get_json()['id']
+
+    # Nessuna e' predefinita: e' lo stato di un'installazione che ha
+    # accumulato strutture prima che la regola esistesse, e dall'API non si
+    # puo' produrre — la scelta si sposta, non si toglie.
+    db = _open_sqlcipher(_test_env['tenant_path'], _test_env['tenant_key'])
+    db.execute("UPDATE struttura_presets SET is_default=0")
+    db.commit()
+
+    rv = client.post('/api/admin/modello/applica',
+                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     content_type='multipart/form-data', headers=auth(admin_token))
+
+    assert rv.status_code == 201, rv.get_json()
+    assert rv.get_json()['preset_id'] == ultima
+    predefinite = [p for p in _strutture_del_tenant(client, admin_token, auth)
+                   if p['is_default']]
+    assert [p['id'] for p in predefinite] == [ultima]

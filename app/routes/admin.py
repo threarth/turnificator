@@ -2182,16 +2182,16 @@ def crea_calendario():
     if esistente:
         return jsonify({'ok': False, 'errore': f'Calendario {mese}/{anno} già esistente.'}), 409
 
-    # Se nessun preset specificato, usa il preset predefinito
+    # Il tenant ha una struttura sola: non si chiede quale usare.
     if not preset_id:
-        default_preset = query_one(
-            "SELECT id FROM struttura_presets WHERE is_default=1"
-        )
-        if default_preset:
-            preset_id = default_preset['id']
+        preset_id = _struttura_del_tenant()
 
     if not preset_id:
-        return jsonify({'ok': False, 'errore': 'Selezionare un preset struttura.'}), 400
+        return jsonify({
+            'ok': False,
+            'errore': 'Questa organizzazione non ha ancora una struttura turni: '
+                      'creala dalla configurazione, poi torna qui.'
+        }), 400
 
     # Snapshot delle regole conflitto attive al momento della creazione
     from app.services.validatori import snapshot_regole
@@ -3496,20 +3496,59 @@ def _crea_persone(persone):
     return credenziali
 
 
+def _struttura_del_tenant():
+    """
+    La struttura turni del tenant: ne ha una sola.
+
+    E' quella marcata come predefinita. Se nessuna lo e' — puo' succedere a
+    un'installazione che ne ha accumulate prima che la regola esistesse — si
+    prende l'ultima creata, invece di lasciare l'organizzazione senza
+    struttura e senza modo di fare un calendario. Il primo import la marca, e
+    da li' in avanti la scelta e' scritta.
+
+    Returns:
+        int|None: id della struttura, None se il tenant non ne ha nessuna.
+    """
+    predefinita = query_one(
+        "SELECT id FROM struttura_presets WHERE is_default=1", ()
+    )
+    if predefinita:
+        return predefinita['id']
+
+    ultima = query_one(
+        "SELECT id FROM struttura_presets ORDER BY id DESC LIMIT 1", ()
+    )
+
+    return ultima['id'] if ultima else None
+
+
+def _svuota_struttura(preset_id):
+    """
+    Toglie da una struttura turni tutto il suo contenuto.
+
+    Cancellare i sovragruppi porta via a cascata gruppi e turni, e con loro
+    posti fissi ed esclusioni, che parlavano di turni che non esistono piu'.
+    I calendari gia' creati non ne risentono: ciascuno porta la propria copia
+    della struttura, fatta al momento della creazione.
+    """
+    execute_write("DELETE FROM sovragruppi WHERE preset_id=?", (preset_id,))
+
+
 def _crea_struttura_turni(nome_preset, letto):
     """
-    Crea il preset con strutture, gruppi di fascia e turni del foglio.
+    Scrive nella struttura turni del tenant quella letta dal foglio.
 
-    I turni conservano l'ordine del foglio: e' quello con cui la griglia del
-    modello dispone le righe, ed e' cio' che permettera' di riesportarci
-    dentro un mese.
+    Il tenant ha una struttura sola: se ce l'ha gia', questa la sostituisce —
+    non se ne affianca una seconda. I turni conservano l'ordine del foglio,
+    che e' quello con cui la griglia del modello dispone le righe, ed e' cio'
+    che permettera' di riesportarci dentro un mese.
 
     Args:
         nome_preset (str): nome da dare alla struttura turni.
         letto (dict): esito di leggi_struttura().
 
     Returns:
-        tuple: (id del preset, None) oppure (None, messaggio d'errore).
+        tuple: (id della struttura, None) oppure (None, messaggio d'errore).
     """
     fasce = {
         r['nome']: r['id']
@@ -3524,12 +3563,24 @@ def _crea_struttura_turni(nome_preset, letto):
 
     tipologie = _crea_tipologie(letto['tipologie'])
 
-    me = get_current_user()
-    cur = execute_write(
-        "INSERT INTO struttura_presets (nome, created_by) VALUES (?,?)",
-        (nome_preset, me['id'])
-    )
-    preset_id = cur.lastrowid
+    preset_id = _struttura_del_tenant()
+    if preset_id is None:
+        preset_id = execute_write(
+            "INSERT INTO struttura_presets (nome, created_by, is_default) "
+            "VALUES (?,?,1)",
+            (nome_preset, get_current_user()['id'])
+        ).lastrowid
+    else:
+        _svuota_struttura(preset_id)
+        execute_write(
+            "UPDATE struttura_presets SET nome=?, is_default=1 WHERE id=?",
+            (nome_preset, preset_id)
+        )
+        # Una sola predefinita: se ne restassero altre, il calendario non
+        # saprebbe piu' quale struttura usare.
+        execute_write(
+            "UPDATE struttura_presets SET is_default=0 WHERE id!=?", (preset_id,)
+        )
 
     sigle_sg = set()
     for ordine_sg, struttura in enumerate(letto['strutture']):
@@ -3602,9 +3653,14 @@ def applica_modello():
     nome_preset = (request.form.get('nome_preset') or '').strip()
     if not nome_preset:
         return jsonify({'ok': False, 'errore': 'Dai un nome alla struttura turni.'}), 400
-    if query_one("SELECT id FROM struttura_presets WHERE nome=?", (nome_preset,)):
+    altra = query_one(
+        "SELECT id FROM struttura_presets WHERE nome=? AND id!=COALESCE(?, -1)",
+        (nome_preset, _struttura_del_tenant())
+    )
+    if altra:
         return jsonify({
-            'ok': False, 'errore': f'Struttura turni "{nome_preset}" gia esistente.'
+            'ok': False,
+            'errore': f'Un\'altra struttura turni si chiama gia "{nome_preset}".'
         }), 409
 
     try:
@@ -3620,6 +3676,8 @@ def applica_modello():
         return jsonify({'ok': False, 'errore': 'Correzioni alle strutture illeggibili.'}), 400
 
     letto = rinomina_strutture(letto, rinomina)
+
+    sostituita = _struttura_del_tenant() is not None
 
     preset_id, errore = _crea_struttura_turni(nome_preset, letto)
     if errore:
@@ -3638,6 +3696,7 @@ def applica_modello():
     return jsonify({
         'ok': True,
         'preset_id': preset_id,
+        'sostituita': sostituita,
         'strutture': len(letto['strutture']),
         'turni': len(letto['turni']),
         'tipologie': len(letto['tipologie']),

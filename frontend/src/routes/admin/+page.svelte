@@ -29,12 +29,11 @@
 
   // ── Calendari ──────────────────────────────────────────────────
   let calendari   = [];
-  let nuovoCal    = { mese: '', anno: new Date().getFullYear(), preset_id: '' };
-  // Auto-seleziona il preset predefinito, o il primo disponibile
-  $: if (presets.length && !nuovoCal.preset_id) {
-    const def = presets.find(p => p.is_default);
-    nuovoCal.preset_id = def ? def.id : presets[0].id;
-  }
+  let nuovoCal    = { mese: '', anno: new Date().getFullYear() };
+  // La struttura turni dell'organizzazione: ce n'e' una sola, ed e' quella
+  // predefinita — o l'unica, se nessuna porta il segno.
+  $: strutturaDelTenant = presets.find(p => p.is_default)
+      ?? (presets.length === 1 ? presets[0] : null);
   let msgCal      = '';
 
   // ── Utenti ─────────────────────────────────────────────────────
@@ -1724,14 +1723,13 @@
             <label class="form-label small">Anno</label>
             <input class="form-control form-control-sm" type="number" bind:value={nuovoCal.anno} style="width:90px" />
           </div>
+          <!-- Nessuna scelta di struttura: l'organizzazione ne ha una sola,
+               ed e' quella della configurazione. -->
           <div class="col-auto">
-            <label class="form-label small">Preset struttura</label>
-            <select class="form-select form-select-sm" bind:value={nuovoCal.preset_id} style="width:180px">
-              <option value="">— nessun preset —</option>
-              {#each presets as p}
-                <option value={p.id}>{p.nome}{p.is_default ? ' ★' : ''}</option>
-              {/each}
-            </select>
+            <div class="form-label small">Struttura turni</div>
+            <div class="form-control-plaintext form-control-sm py-0">
+              {strutturaDelTenant?.nome ?? '— nessuna: creala dalla configurazione —'}
+            </div>
           </div>
           <div class="col-auto">
             <button class="btn btn-primary btn-sm" on:click={creaCal}>
