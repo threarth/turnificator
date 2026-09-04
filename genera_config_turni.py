@@ -23,6 +23,8 @@ import re
 import unicodedata
 
 import openpyxl
+import openpyxl.formatting.rule
+import openpyxl.styles.differential
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -429,6 +431,7 @@ def costruisci_richieste(ws):
         righe.append([
             sigla,
             'assenza' if e_assenza else 'lavorativo',
+            FASCIA_RICHIESTA.get(sigla.upper(), ''),
             # ROMC e' l'unico riposo che non concorre al monte ore.
             'NO' if sigla.upper() == 'ROMC' else 'SI',
             'SI' if sigla in anche_festivi else 'NO',
@@ -714,8 +717,8 @@ def scrivi_riferimenti(wb, bersagli, richieste):
                    ['bersaglio', 'livello', 'nome', 'descrizione'], bersagli)
 
     scrivi_tabella(wb, 'Richieste', 'T_Richieste',
-                   ['sigla', 'tipo', 'conta_ore', 'anche_festivi', 'note'],
-                   richieste)
+                   ['sigla', 'tipo', 'fascia', 'conta_ore',
+                    'anche_festivi', 'note'], richieste)
 
     scrivi_tabella(wb, 'Regole', 'T_Regole',
                    ['nome', 'tipo', 'fascia_a', 'fascia_b', 'offset_giorni',
@@ -810,7 +813,8 @@ def main():
     scrivi_parametri(wb, mese, anno)
 
     festivita = calcola_festivita(anno)
-    _, celle_aperte = scrivi_calendario(wb, turni, mese, anno, festivita)
+    _, celle_aperte = scrivi_calendario(wb, turni, mese, anno,
+                                        festivita, len(persone))
     scrivi_desiderata(wb, persone, mese, anno, festivita)
 
     for nome, foglio in (('elenco_bersagli', 'Bersagli'),
@@ -860,6 +864,28 @@ GRIGIO_INTESTAZIONE = 'FFF2F2F2'
 
 MESI = ('gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
         'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre')
+
+# Le richieste che nominano una fascia: chi chiede M e finisce di
+# pomeriggio ha un desiderata disatteso, e la griglia deve dirlo.
+FASCIA_RICHIESTA = {'M': 'mattina', 'P': 'pomeriggio',
+                    'N': 'notte', 'L': 'lunga'}
+
+# I colori delle segnalazioni. I gravi rompono una regola assoluta, gli
+# avvisi disattendono una richiesta: due gravita', due letture a colpo
+# d'occhio.
+COLORE_GRAVE_SFONDO = 'FFFFC7CE'
+COLORE_GRAVE_TESTO = 'FF9C0006'
+COLORE_ASSENZA_SFONDO = 'FFFFEB9C'
+COLORE_ASSENZA_TESTO = 'FF9C6500'
+COLORE_FASCIA_SFONDO = 'FFE4DFEC'
+COLORE_FASCIA_TESTO = 'FF7030A0'
+
+# Le colonne di servizio del Calendario: portano la fascia e l'id di ogni
+# riga, cosi' le regole sanno che turno stanno guardando senza bisogno di
+# un foglio parallelo. Restano nascoste.
+COLONNA_FASCIA_RIGA = 34
+COLONNA_ID_RIGA = 35
+
 
 # Le sezioni della griglia, nell'ordine e con i colori del modello
 # originale: (titolo, tipologia della sede, fascia, colore del titolo,
@@ -1085,7 +1111,7 @@ def _tipologia_per_sede():
     return {sede[0]: sede[3] for sede in SEDI}
 
 
-def scrivi_calendario(wb, turni, mese, anno, festivita):
+def scrivi_calendario(wb, turni, mese, anno, festivita, numero_persone):
     """
     La griglia dei turni, nella veste del modello originale.
 
@@ -1101,6 +1127,7 @@ def scrivi_calendario(wb, turni, mese, anno, festivita):
         turni (list): i turni completati.
         mese (int), anno (int): il mese da programmare.
         festivita (dict): le date festive dell'anno.
+        numero_persone (int): quante righe ha il foglio Desiderata.
 
     Returns:
         tuple: (foglio, numero di celle da coprire).
@@ -1132,14 +1159,71 @@ def scrivi_calendario(wb, turni, mese, anno, festivita):
                                       festivita, prima_colonna, colore_nome)
         riga += len(della_sezione)
 
+    ultima_riga = riga - 1
+    ultimo_giorno = get_column_letter(prima_colonna + len(giorni) - 1)
+
     ws.freeze_panes = (f'{get_column_letter(prima_colonna)}'
                        f'{PRIMA_RIGA_DATI}')
     aggiungi_tendina(ws, [get_column_letter(prima_colonna + scarto)
                           for scarto in range(len(giorni))],
-                     'elenco_persone',
-                     PRIMA_RIGA_DATI, riga)
+                     'elenco_persone', PRIMA_RIGA_DATI, ultima_riga)
+
+    for colonna in (COLONNA_FASCIA_RIGA, COLONNA_ID_RIGA):
+        ws.column_dimensions[get_column_letter(colonna)].hidden = True
+
+    _applica_segnalazioni(ws, ultima_riga, ultimo_giorno, numero_persone)
+    _scrivi_legenda(ws, ultima_riga + 2)
 
     return ws, aperte
+
+
+def _applica_segnalazioni(ws, ultima_riga, ultimo_giorno, numero_persone):
+    """
+    Attacca alla griglia le regole che colorano gli errori.
+
+    Args:
+        ws: il foglio Calendario.
+        ultima_riga (int): ultima riga della griglia.
+        ultimo_giorno (str): lettera dell'ultima colonna dei giorni.
+        numero_persone (int): quante righe ha il foglio Desiderata.
+    """
+    richiesta = _richiesta_del_giorno(
+        PRIMA_RIGA_DATI, PRIMA_RIGA_DATI - 1 + numero_persone, ultimo_giorno)
+
+    for prima_cella, formula, stile, _ in _regole_segnalazione(ultima_riga,
+                                                               richiesta):
+        colonna = prima_cella[0]
+        intervallo = (f'{colonna}{PRIMA_RIGA_DATI}:'
+                      f'{ultimo_giorno}{ultima_riga}')
+        regola = openpyxl.formatting.rule.Rule(
+            type='expression', dxf=stile, formula=[formula])
+        ws.conditional_formatting.add(intervallo, regola)
+
+
+def _scrivi_legenda(ws, riga):
+    """La legenda dei colori, sotto la griglia."""
+    ws.cell(riga, 2, 'LEGENDA SEGNALAZIONI').font = \
+        openpyxl.styles.Font(bold=True, size=CORPO_NOME)
+
+    voci = ((COLORE_GRAVE_SFONDO, COLORE_GRAVE_TESTO,
+             'Regola assoluta violata: doppio turno, notte con altro '
+             'turno, smonto notte non rispettato'),
+            (COLORE_ASSENZA_SFONDO, COLORE_ASSENZA_TESTO,
+             'Assegnato in un giorno per cui aveva chiesto un assenza'),
+            (COLORE_FASCIA_SFONDO, COLORE_FASCIA_TESTO,
+             'Fascia diversa da quella richiesta'),
+            (GRIGIO_CHIUSO, None, 'Cella chiusa: quel turno quel giorno '
+             'non si copre'))
+
+    for scarto, (sfondo, colore, descrizione) in enumerate(voci):
+        campione = ws.cell(riga + 1 + scarto, 2, 'esempio')
+        campione.fill = openpyxl.styles.PatternFill('solid', fgColor=sfondo)
+        campione.alignment = openpyxl.styles.Alignment(horizontal='center')
+        if colore:
+            campione.font = openpyxl.styles.Font(bold=True, color=colore)
+
+        ws.cell(riga + 1 + scarto, 3, descrizione).font = \
+            openpyxl.styles.Font(size=CORPO_GRIGLIA)
 
 
 def _scrivi_righe_turno(ws, turni, prima_riga, giorni, festivita,
@@ -1173,6 +1257,11 @@ def _scrivi_righe_turno(ws, turni, prima_riga, giorni, festivita,
         sigla.font = openpyxl.styles.Font(size=CORPO_GRIGLIA)
         sigla.alignment = centrato
 
+        # Le colonne di servizio: dicono alle regole che turno e'
+        # questa riga, senza che debbano contare le righe.
+        ws.cell(riga, COLONNA_FASCIA_RIGA, turno['fascia'])
+        ws.cell(riga, COLONNA_ID_RIGA, turno['id'])
+
         nome = ws.cell(riga, 2, turno['nome_visualizzato'])
         nome.fill = riempimento
         nome.font = openpyxl.styles.Font(bold=True, size=CORPO_NOME)
@@ -1190,6 +1279,95 @@ def _scrivi_righe_turno(ws, turni, prima_riga, giorni, festivita,
                 cella.fill = grigio
 
     return aperte
+
+
+def _stile_segnalazione(sfondo, testo):
+    """Lo stile differenziale che una regola applica quando scatta."""
+    return openpyxl.styles.differential.DifferentialStyle(
+        font=openpyxl.styles.Font(bold=True, color=testo),
+        fill=openpyxl.styles.PatternFill(bgColor=sfondo))
+
+
+def _richiesta_del_giorno(riga_desiderata, ultima_persona, ultimo_giorno):
+    """
+    La formula che pesca cosa aveva chiesto, quel giorno, chi sta in cella.
+
+    Le due griglie hanno i giorni nelle stesse colonne, quindi lo stesso
+    scarto vale per entrambe e non serve cercare la data.
+
+    Args:
+        riga_desiderata (int): prima riga di dati del foglio Desiderata.
+        ultima_persona (int): ultima riga di dati del foglio Desiderata.
+        ultimo_giorno (str): lettera dell'ultima colonna dei giorni.
+
+    Returns:
+        str: il frammento di formula, senza uguale.
+    """
+    return (f'IFERROR(INDEX(Desiderata!$C${riga_desiderata}:'
+            f'${ultimo_giorno}${ultima_persona},'
+            f'MATCH(C{PRIMA_RIGA_DATI},Desiderata!$B${riga_desiderata}:'
+            f'$B${ultima_persona},0),COLUMN()-2),"")')
+
+
+def _regole_segnalazione(ultima_riga, richiesta):
+    """
+    Le regole che colorano gli errori, in ordine di gravita'.
+
+    Sono le stesse che l'originale otteneva con il foglio Matrici e
+    trentacinque formattazioni condizionali, ma scritte in modo che non
+    dipendano dalla posizione delle righe: dove sta la notte lo dice la
+    colonna di servizio, non il numero di riga.
+
+    Args:
+        ultima_riga (int): ultima riga della griglia.
+        richiesta (str): formula che ricava il desiderata del giorno.
+
+    Returns:
+        list: tuple (intervallo, formula, stile, descrizione).
+    """
+    fasce = (f'${get_column_letter(COLONNA_FASCIA_RIGA)}$'
+             f'{PRIMA_RIGA_DATI}:${get_column_letter(COLONNA_FASCIA_RIGA)}$'
+             f'{ultima_riga}')
+    fascia_riga = (f'${get_column_letter(COLONNA_FASCIA_RIGA)}'
+                   f'{PRIMA_RIGA_DATI}')
+    colonna = f'C${PRIMA_RIGA_DATI}:C${ultima_riga}'
+    # Ancorata alla colonna D, quindi il giorno prima e' C: Excel
+    # trasla il riferimento insieme alla cella che valuta.
+    precedente = f'C${PRIMA_RIGA_DATI}:C${ultima_riga}'
+    cella = f'C{PRIMA_RIGA_DATI}'
+    grave = _stile_segnalazione(COLORE_GRAVE_SFONDO, COLORE_GRAVE_TESTO)
+
+    return [
+        (f'C{PRIMA_RIGA_DATI}',
+         f'AND({cella}<>"",COUNTIF({colonna},{cella})>1)',
+         grave, 'La stessa persona due volte nello stesso giorno'),
+
+        (f'C{PRIMA_RIGA_DATI}',
+         f'AND({cella}<>"",'
+         f'COUNTIFS({fasce},"notte",{colonna},{cella})>0,'
+         f'COUNTIFS({fasce},"<>notte",{colonna},{cella})>0)',
+         grave, 'Notte e altro turno lo stesso giorno'),
+
+        (f'D{PRIMA_RIGA_DATI}',
+         f'AND(D{PRIMA_RIGA_DATI}<>"",'
+         f'COUNTIFS({fasce},"notte",{precedente},D{PRIMA_RIGA_DATI})>0)',
+         grave, 'Smonto notte: ha lavorato la notte prima'),
+
+        (f'C{PRIMA_RIGA_DATI}',
+         f'AND({cella}<>"",'
+         f'COUNTIFS(Richieste!$A:$A,{richiesta},'
+         f'Richieste!$B:$B,"assenza")>0)',
+         _stile_segnalazione(COLORE_ASSENZA_SFONDO, COLORE_ASSENZA_TESTO),
+         'Assegnato in un giorno di assenza richiesta'),
+
+        (f'C{PRIMA_RIGA_DATI}',
+         f'AND({cella}<>"",{fascia_riga}<>"",'
+         f'COUNTIFS(Richieste!$A:$A,{richiesta},Richieste!$C:$C,"<>")>0,'
+         f'COUNTIFS(Richieste!$A:$A,{richiesta},'
+         f'Richieste!$C:$C,{fascia_riga})=0)',
+         _stile_segnalazione(COLORE_FASCIA_SFONDO, COLORE_FASCIA_TESTO),
+         'Fascia diversa da quella richiesta'),
+    ]
 
 
 def scrivi_desiderata(wb, persone, mese, anno, festivita):
