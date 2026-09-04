@@ -38,35 +38,38 @@ decisioni, in fondo.
 
 ---
 
-## 2. Pagina di riepilogo sotto il calendario
+## 2. Pagina di riepilogo sotto il calendario — fatto
 
-Specifica presa da `esempio.xlsx.xlsx` (foglio `Inserimento`, righe 137-180, e
-foglio `Riepilogo`). Va **sotto la griglia del calendario**, nella pagina
-manager.
+Fatto, a schermo. I cinque blocchi presi da `esempio.xlsx.xlsx` stanno sotto
+la griglia della pagina manager, in `RiepilogoCalendario.svelte`, e si
+aggiornano mentre si costruisce il turno: i conteggi li fa
+`lib/riepilogo.js` nel browser, sui dati che la pagina ha già.
 
-### I blocchi, come sono nel foglio
+Nei primi tre blocchi i lavoratori stanno in colonna e le voci in riga, come
+nel foglio; negli ultimi due in riga, perché le colonne sono le strutture e le
+settimane.
 
-| Blocco | Righe |
-|---|---|
-| Turni feriali e festivi | notti feriali, notti festive, giorni feriali, giorni festivi, turni 12h |
-| Solo weekend | diurni sab/dom, notti sab, notti dom, **ore** |
-| Globale | lavorati, assenze giustificate, totale — con «TURNI DA SVOLGERE: n» nel titolo |
-| Per struttura (foglio `Riepilogo`) | lavoratori in riga, strutture in colonna, più `AGGIUNT.` e `TOTALE` |
-| Per settimana | settimane in colonna, lavoratori in riga, riga con i **dovuti di quella settimana**, colonna `TOT` |
+Due cose derivate, non inchiodate:
 
-### Regole di calcolo
+- **Le ore del weekend** si spezzano sulla mezzanotte partendo dagli orari
+  della fascia — se l'ora di fine è minore di quella di inizio, la fascia
+  scavalca. Per `notte 20:00-08:40`: 240 minuti sul giorno di inizio, 530 su
+  quello dopo. I due pezzi sommano sempre la durata totale.
+- **La fascia che vale due turni** (peso ≥ 2, diurna) compare con il proprio
+  nome, non sotto un'etichetta «12h» che nessuno ha scelto. È un
+  sottoinsieme dei giorni feriali e festivi, non una voce che si somma a loro.
 
-- **Si contano i pesi, non le righe**: una lunga o una notte valgono 2.
-  È già come il solver confronta il fatto con il dovuto.
-- **Ore del weekend**: la notte scavalca la mezzanotte e va spezzata sui due
-  giorni. Per `notte 20:00-08:40`: **240 minuti** sul giorno di inizio,
-  **520 + la pausa** sul giorno dopo. Si deriva dagli orari della fascia,
-  senza inchiodare niente: se `orario_fine < orario_inizio` la fascia
-  scavalca.
-  Esempio dell'utente: notte del venerdì → il sabato prende 8h40 (+10);
-  notte della domenica → domenica 4h, lunedì 8h40 (+10).
-- I dovuti per settimana escono da `calendario_giorni.classifica_giorno`,
-  contando i giorni lavorativi della settimana (lunedì-domenica).
+I dovuti della settimana sono i suoi giorni lavorativi, e i dovuti del mese la
+loro somma: sui giorni di aprile 2026 tornano i numeri del foglio (4, 5, 6, 5,
+4 → 24).
+
+### Coda
+
+- **Il riepilogo non è nell'export.** Scelta esplicita: metterlo nel foglio
+  vorrebbe dire scrivere gli stessi conteggi una seconda volta in Python, con
+  il rischio che le due versioni divergano. Se serve, la strada è spostare il
+  calcolo sul server e farlo leggere a entrambi — perdendo però
+  l'aggiornamento immediato mentre si lavora.
 
 ---
 

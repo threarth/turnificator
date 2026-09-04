@@ -10,6 +10,7 @@
   import { user as userStore } from '$lib/auth.js';
   import StyleContextMenu from '$lib/StyleContextMenu.svelte';
   import { etichettaStruttura } from '$lib/etichette.js';
+  import RiepilogoCalendario from '$lib/RiepilogoCalendario.svelte';
   import { TIPI_REGOLA, etichettaBreve } from '$lib/regole.js';
   import CellEditor from '$lib/CellEditor.svelte';
   import { clickOutside } from '$lib/admin/actions.js';
@@ -1079,6 +1080,14 @@
       map[g] = new Date(anno, mese - 1, g).getDay(); // 0=Dom, 6=Sab
     }
     return map;
+  });
+
+  // Il giorno della settimana come funzione, non come mappa: al riepilogo
+  // serve anche il giorno dopo l'ultimo del mese, dove la notte va a finire.
+  let dowCalendario = $derived.by(() => {
+    const cal = struttura?.calendario;
+    if (!cal) return () => -1;
+    return giorno => new Date(cal.anno, cal.mese - 1, giorno).getDay();
   });
 
   // ── Notti mese precedente ────────────────────────────────────
@@ -5765,6 +5774,18 @@
     </table>
   {/if}
   </div>
+
+  <RiepilogoCalendario
+    sovragruppi={struttura?.sovragruppi ?? []}
+    giorni={struttura?.giorni ?? []}
+    assegnazioni={localAss}
+    utenti={utentiBasic}
+    desiderata={wdFull}
+    tipiRichiesta={configSnapshot.tipi_richiesta ?? []}
+    fasce={configSnapshot.flag_turno ?? solverFlagTurno}
+    {mappaFlag}
+    dow={dowCalendario}
+    etichetta={$etichettaStruttura} />
 
 <!-- ── WORKING DESIDERATA ─────────────────────────────────────── -->
 {:else if vista === 'working'}
