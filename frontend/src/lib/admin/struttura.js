@@ -111,6 +111,33 @@ export function costruisciStruttura(strutture, fasce, nuovoId) {
 
 
 /**
+ * Appiattisce la struttura del database nel modello della procedura guidata.
+ *
+ * Il database la tiene su tre livelli — struttura, gruppo, turno — mentre il
+ * wizard ne mostra due: il gruppo e' la fascia oraria, e qui torna a essere
+ * un attributo del turno. E' l'operazione inversa di costruisciStruttura().
+ *
+ * @param {Array} sovragruppi — come li restituisce l'API della struttura.
+ * @returns {Array} strutture nel modello piatto del wizard.
+ */
+export function appiattisciStruttura(sovragruppi) {
+    return (sovragruppi ?? []).map(sg => ({
+        id: sg.id,
+        nome: sg.nome ?? '',
+        ambito: sg.ambito ?? '',
+        escluso_solver: sg.escluso_solver ? 1 : 0,
+        turni: (sg.gruppi ?? []).flatMap(g =>
+            (g.turni ?? []).map(t => ({
+                nome: t.nome ?? '',
+                flag_id: g.flag_id,
+                tipi_qualitativi: (t.tipi_qualitativi ?? []).map(q => q?.id ?? q),
+            }))
+        ),
+    }));
+}
+
+
+/**
  * Propone il nome per la copia di un turno.
  *
  * La copia in un'altra fascia e' gia' un turno diverso — la sigla porta in

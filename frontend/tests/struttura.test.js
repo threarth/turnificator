@@ -9,8 +9,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { costruisciStruttura, gruppiDellaStruttura, nomeDuplicato, toSigla }
-    from '../src/lib/admin/struttura.js';
+import { appiattisciStruttura, costruisciStruttura, gruppiDellaStruttura,
+         nomeDuplicato, toSigla } from '../src/lib/admin/struttura.js';
 
 // Fasce di riferimento, negli stessi orari del seed.
 const FASCE = [
@@ -232,4 +232,72 @@ test('le tipologie di un turno non si condividono per riferimento', () => {
 
     assert.deepEqual(b.tipi_qualitativi, [4]);
     assert.deepEqual(scelte, [4]);
+});
+
+
+// ---------------------------------------------------------------------------
+// Dal database al modello del wizard
+// ---------------------------------------------------------------------------
+
+test('appiattisciStruttura porta la fascia dal gruppo al turno', () => {
+    const dal_db = [{
+        id: 1, nome: 'S.G.', ambito: '', escluso_solver: 0,
+        gruppi: [
+            { id: 1, flag_id: 11, turni: [{ id: 1, nome: 'DEA 1', tipi_qualitativi: [] },
+                                          { id: 2, nome: 'DEA 2', tipi_qualitativi: [] }] },
+            { id: 2, flag_id: 14, turni: [{ id: 3, nome: 'Notte', tipi_qualitativi: [] }] },
+        ],
+    }];
+
+    assert.deepEqual(appiattisciStruttura(dal_db), [{
+        id: 1, nome: 'S.G.', ambito: '', escluso_solver: 0,
+        turni: [
+            { nome: 'DEA 1', flag_id: 11, tipi_qualitativi: [] },
+            { nome: 'DEA 2', flag_id: 11, tipi_qualitativi: [] },
+            { nome: 'Notte', flag_id: 14, tipi_qualitativi: [] },
+        ],
+    }]);
+});
+
+test('appiattisciStruttura tiene le tipologie come soli id', () => {
+    const dal_db = [{
+        id: 1, nome: 'S.G.', gruppi: [{ flag_id: 11, turni: [
+            { nome: 'TC', tipi_qualitativi: [{ id: 3, nome: 'TC' }, { id: 5, nome: 'RM' }] },
+        ] }],
+    }];
+
+    assert.deepEqual(appiattisciStruttura(dal_db)[0].turni[0].tipi_qualitativi, [3, 5]);
+});
+
+test('appiattisciStruttura conserva la sospensione dal solver', () => {
+    // Perderla qui rimetterebbe la struttura dentro al solver al primo
+    // salvataggio della procedura guidata, senza dirlo.
+    const dal_db = [{ id: 1, nome: 'Fuori', escluso_solver: 1, gruppi: [] }];
+
+    assert.equal(appiattisciStruttura(dal_db)[0].escluso_solver, 1);
+});
+
+test('appiattisciStruttura regge una struttura senza gruppi o senza turni', () => {
+    assert.deepEqual(appiattisciStruttura([]), []);
+    assert.deepEqual(appiattisciStruttura(null), []);
+    assert.deepEqual(appiattisciStruttura([{ id: 1, nome: 'Vuota' }])[0].turni, []);
+});
+
+test('quello che si appiattisce si puo ricostruire', () => {
+    // Le due funzioni sono l'una l'inversa dell'altra: la procedura guidata
+    // legge con la prima e salva con la seconda, e in mezzo non deve perdersi
+    // niente.
+    const dal_db = [{
+        id: 1, nome: 'S.G.', ambito: 'Radiologia', escluso_solver: 1,
+        gruppi: [{ flag_id: 11, turni: [{ nome: 'DEA 1', tipi_qualitativi: [] }] }],
+    }];
+
+    const rifatta = costruisciStruttura(
+        appiattisciStruttura(dal_db), FASCE, contatoreId()
+    );
+
+    assert.equal(rifatta[0].nome, 'S.G.');
+    assert.equal(rifatta[0].ambito, 'Radiologia');
+    assert.equal(rifatta[0].escluso_solver, 1);
+    assert.equal(rifatta[0].gruppi[0].turni[0].nome, 'DEA 1');
 });

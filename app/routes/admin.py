@@ -1443,6 +1443,9 @@ def get_struttura_preset(pid):
         sg_out = {
             'id': sg['id'], 'sigla': sg['sigla'], 'nome': sg['nome'],
             'ambito': sg['ambito'], 'ordine': sg['ordine'],
+            # Senza, chi rilegge la struttura per modificarla la riscrive
+            # dentro al solver: la sospensione si perderebbe in silenzio.
+            'escluso_solver': sg.get('escluso_solver', 0),
             'style': json.loads(sg.get('style', '{}')), 'gruppi': []
         }
         for g in gruppi_list:

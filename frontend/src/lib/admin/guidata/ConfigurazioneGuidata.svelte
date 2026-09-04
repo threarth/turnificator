@@ -33,7 +33,8 @@
     import { focusOnMount } from '../actions.js';
     import DeleteButton from '../DeleteButton.svelte';
     import VincoliSolver from '../VincoliSolver.svelte';
-    import { costruisciStruttura, nomeDuplicato } from '../struttura.js';
+    import { appiattisciStruttura, costruisciStruttura, nomeDuplicato }
+        from '../struttura.js';
     import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
     import SezioneModello from './SezioneModello.svelte';
     import SezioneFasce from './SezioneFasce.svelte';
@@ -110,10 +111,17 @@
      * struttura turni sono cambiati sotto i piedi. Senza avvisare chi ci
      * contiene, la scheda che la modifica resta spenta su dati vecchi.
      */
-    async function ricaricaDopoImport() {
+    async function ricaricaDopoImport(presetId) {
         await onutentiaggiornati?.();
         await ontipologieaggiornate?.();
         await onstrutturaimportata?.();
+
+        // Le sezioni Strutture e I turni mostrano ancora il modello vuoto:
+        // vanno riempite con quello che l'import ha appena scritto.
+        if (presetId) {
+            strutturaCaricata = presetId;
+            await caricaStrutturaEsistente(presetId);
+        }
     }
 
     // Etichetta personalizzata: attiva quando nessun suggerimento va bene.
@@ -122,6 +130,30 @@
     // Passo 2 e 3 — il modello del wizard e' piatto: struttura → turni.
     // I gruppi non esistono qui, li materializza costruisciStruttura().
     let strutture = [struttureVuota()];
+
+    // La struttura che il tenant ha gia' — costruita a mano o importata da un
+    // foglio — si carica qui dentro: le due sezioni la mostrano invece di
+    // partire vuote, e confermando si aggiorna quella, non se ne crea un'altra.
+    let strutturaCaricata = null;
+
+    $: if (presetEsistente?.id && strutturaCaricata !== presetEsistente.id) {
+        strutturaCaricata = presetEsistente.id;
+        caricaStrutturaEsistente(presetEsistente.id);
+    }
+
+    /**
+     * Legge la struttura del tenant e la appiattisce nel modello del wizard.
+     *
+     * Il database la tiene su tre livelli, il wizard su due: il gruppo e' la
+     * fascia oraria, e qui torna a essere un attributo del turno.
+     */
+    async function caricaStrutturaEsistente(presetId) {
+        const r = await adminApi.getStrutturaPreset(presetId);
+        if (!r.ok && !r.struttura) return;
+
+        const lette = appiattisciStruttura(r.struttura);
+        if (lette.length) strutture = lette;
+    }
 
     let nomePreset = '';
 
@@ -364,8 +396,8 @@
 
         <!-- ═══ Parti da un foglio ═══ -->
         {#if sezioneCorrente === 'modello'}
-            <SezioneModello onstrutturacreata={() => strutturaDaFoglio = true}
-                            onaggiornati={ricaricaDopoImport} />
+            <SezioneModello onstrutturacreata={id => { strutturaDaFoglio = true;
+                                                       ricaricaDopoImport(id); }} />
         {/if}
 
         <!-- ═══ Fasce orarie ═══ -->

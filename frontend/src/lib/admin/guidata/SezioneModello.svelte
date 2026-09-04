@@ -13,14 +13,12 @@
   programmati, e la struttura appena creata gli combacia riga per riga.
 
   Props:
-    - onstrutturacreata: (presetId) => void — struttura creata dal foglio
-    - onaggiornati     : () => Promise — ricarica utenti e tipologie
+    - onstrutturacreata: (presetId) => Promise — la struttura e' stata creata
 -->
 <script>
     import { adminApi } from '$lib/api.js';
 
-    export let onstrutturacreata = () => {};
-    export let onaggiornati = async () => {};
+    export let onstrutturacreata = async () => {};
 
     const TESTI = {
         intro: "Se i turni li tieni già in un foglio Excel, il programma può "
@@ -88,8 +86,7 @@
 
         esito = r;
         letto = null;
-        await onaggiornati();
-        onstrutturacreata(r.preset_id);
+        await onstrutturacreata(r.preset_id);
     }
 
     /** Quanti turni per fascia, per il riepilogo di cio' che si e' letto. */

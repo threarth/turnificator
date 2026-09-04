@@ -516,3 +516,20 @@ def test_senza_predefinita_si_usa_l_ultima_creata(client, admin_token, auth, _te
     predefinite = [p for p in _strutture_del_tenant(client, admin_token, auth)
                    if p['is_default']]
     assert [p['id'] for p in predefinite] == [ultima]
+
+
+def test_la_sospensione_dal_solver_si_rilegge(client, admin_token, auth):
+    """
+    Chi rilegge la struttura per modificarla deve ritrovarla com'e': senza
+    questo campo, salvare dalla procedura guidata rimetterebbe la struttura
+    dentro al solver senza dirlo.
+    """
+    rv = client.post('/api/admin/modello/applica',
+                     data={**_allega(_modello_di_prova()), 'nome_preset': 'Dal foglio'},
+                     content_type='multipart/form-data', headers=auth(admin_token))
+    preset_id = rv.get_json()['preset_id']
+
+    struttura = client.get(f'/api/admin/struttura-presets/{preset_id}/struttura',
+                           headers=auth(admin_token)).get_json()['struttura']
+
+    assert all('escluso_solver' in sg for sg in struttura)
