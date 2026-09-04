@@ -129,6 +129,12 @@ export const adminApi = {
   editRegola:         (id, dati)   => api.put(`/api/admin/regole-conflitto/${id}`, dati),
   delRegola:          (id)         => api.delete(`/api/admin/regole-conflitto/${id}`),
 
+  // Festivita' (ricorrenze che rendono festivo un giorno)
+  getFestivita:  (anno)      => api.get(`/api/admin/festivita?anno=${anno}`),
+  creaFestivita: (dati)      => api.post('/api/admin/festivita', dati),
+  editFestivita: (id, dati)  => api.put(`/api/admin/festivita/${id}`, dati),
+  delFestivita:  (id)        => api.delete(`/api/admin/festivita/${id}`),
+
   // Tipi richiesta (globali)
   getTipi:    ()           => api.get('/api/admin/tipi-richiesta'),
   creaTipo:   (dati)       => api.post('/api/admin/tipi-richiesta', dati),

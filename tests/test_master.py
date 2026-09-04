@@ -56,11 +56,13 @@ def test_master_crea_tenant_e_login(client, master_token, auth):
     assert body['tenant']['slug'] == 'altrotenant'
     admin_password = body['admin_password']
     assert len(admin_password) > 0
+    # L'amministratore porta il numero del tenant: admin1, admin2, ...
+    assert body['admin_username'].startswith('admin')
 
-    # 2. Login admin del nuovo tenant con la password ritornata
+    # 2. Login admin del nuovo tenant con le credenziali ritornate
     rv = client.post('/api/auth/login', json={
         'tenant':   'altrotenant',
-        'username': 'admin',
+        'username': body['admin_username'],
         'password': admin_password,
     })
     assert rv.status_code == 200, rv.get_json()
@@ -114,10 +116,10 @@ def test_master_crea_tenant_da_schema(client, master_token, auth):
     admin_password = body['admin_password']
     assert admin_password
 
-    # Login con la password generata
+    # Login con le credenziali generate
     rv = client.post('/api/auth/login', json={
         'tenant':   'freshtenant',
-        'username': 'admin',
+        'username': body['admin_username'],
         'password': admin_password,
     })
     assert rv.status_code == 200, rv.get_json()

@@ -17,6 +17,7 @@
 <script>
     import { adminApi } from '$lib/api.js';
     import { etichettaManager } from '$lib/etichette.js';
+    import { user as userStore } from '$lib/auth.js';
 
     export let utenti = [];
     export let strutture = [];
@@ -124,6 +125,35 @@
         await onaggiornati();
     }
 
+    /**
+     * Cambia il ruolo di una persona.
+     *
+     * Togliersi da soli l'amministrazione e' l'unica di queste modifiche che
+     * non si puo' annullare da qui: dopo, la sezione non si apre piu'. Il
+     * server rifiuta comunque di lasciare l'organizzazione senza nessuno.
+     */
+    async function cambiaRuolo(utente, ruolo) {
+        if (ruolo === utente.role) return;
+
+        if (utente.id === $userStore?.id && ruolo !== 'admin') {
+            const conferma = window.confirm(
+                'Stai togliendo a te stesso il ruolo di amministratore. '
+                + 'Dopo non potrai piu\' aprire questa configurazione. Procedo?'
+            );
+            if (!conferma) { utenti = [...utenti]; return; }
+        }
+
+        errore = '';
+        const r = await adminApi.editUtente(utente.id, { ...utente, role: ruolo });
+        if (!r.ok) {
+            errore = r.errore || 'Modifica del ruolo non riuscita.';
+            utenti = [...utenti];   // rimette il select sul valore vero
+            return;
+        }
+
+        await onaggiornati();
+    }
+
     function utenteVuoto() {
         return { username: '', password: '', sigla: '', role: 'basic', sovragruppo_id: null };
     }
@@ -135,10 +165,6 @@
     function proponiSigla() {
         if (nuovo.sigla.trim()) return;
         nuovo.sigla = nuovo.username.trim().slice(0, 3).toUpperCase();
-    }
-
-    function nomeRuolo(valore) {
-        return RUOLI.find(r => r.valore === valore)?.nome ?? valore;
     }
 
     async function aggiungi() {
@@ -202,7 +228,16 @@
                     <tr class:text-muted={!u.is_active}>
                         <td class="fw-semibold">{u.sigla}</td>
                         <td>{u.username}</td>
-                        <td class="small">{nomeRuolo(u.role)}</td>
+                        <td>
+                            <select class="form-select form-select-sm"
+                                    aria-label="Ruolo di {u.sigla}"
+                                    value={u.role}
+                                    on:change={e => cambiaRuolo(u, e.target.value)}>
+                                {#each RUOLI as r}
+                                    <option value={r.valore}>{r.nome}</option>
+                                {/each}
+                            </select>
+                        </td>
                         <td>
                             {#if strutture.length}
                                 <select class="form-select form-select-sm"
@@ -222,6 +257,13 @@
                 {/each}
             </tbody>
         </table>
+        <p class="guidata-aiuto mt-3 mb-0">
+            Ruolo e {etichetta.singolare.toLowerCase()} si cambiano qui, una
+            persona per volta, e il salvataggio è immediato. Per modificare
+            più persone insieme — o per password, esclusioni e ordinamento —
+            si passa dalla <strong>configurazione manuale</strong>, nella
+            scheda Utenti.
+        </p>
     {:else}
         <p class="guidata-aiuto mb-0">
             Nessuna persona inserita. Comincia da te stesso o da un caposala.

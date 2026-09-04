@@ -27,6 +27,7 @@ from app.auth import (
     require_master_role, hash_password
 )
 from app.db import get_master_db, _open_db, _get_tenant_key
+from app.services.utenti import SIGLA_ADMIN, nome_admin_tenant
 
 bp = Blueprint('master', __name__, url_prefix='/api/master')
 
@@ -173,6 +174,13 @@ def crea_tenant():
             'errore': f"Slug '{slug}' gia' in uso."
         }), 409
 
+    # Il nome dell'amministratore porta il numero del tenant: admin1 per il
+    # primo, admin2 per il secondo. I tenant si disattivano, non si
+    # cancellano, quindi il massimo non torna mai indietro e due tenant non
+    # ricevono lo stesso numero.
+    ultimo = master.execute("SELECT COALESCE(MAX(id), 0) AS n FROM tenants").fetchone()
+    admin_username = nome_admin_tenant(ultimo['n'] + 1)
+
     # Genera chiave e percorsi
     tenant_key = secrets.token_hex(32)
     db_filename = f"tenant_{slug}.db"
@@ -244,8 +252,8 @@ def crea_tenant():
         conn.execute("DELETE FROM users WHERE role='admin'")
         conn.execute(
             "INSERT INTO users (username, password_hash, role, sigla) "
-            "VALUES (?, ?, 'admin', 'ADM')",
-            ('admin', admin_hash)
+            "VALUES (?, ?, 'admin', ?)",
+            (admin_username, admin_hash, SIGLA_ADMIN)
         )
 
         # Inserisci tenant_slug nella config
@@ -310,8 +318,10 @@ def crea_tenant():
     return jsonify({
         'ok': True,
         'tenant': dict(tenant_row),
+        'admin_username': admin_username,
         'admin_password': admin_password,
-        'messaggio': f"Tenant '{nome}' creato. Password admin: {admin_password} — comunicarla e farla cambiare."
+        'messaggio': f"Tenant '{nome}' creato. Amministratore: {admin_username} / "
+                     f"{admin_password} — comunicarli e far cambiare la password."
     }), 201
 
 
@@ -471,7 +481,7 @@ def reset_admin_password(tenant_id):
         db = get_db()
 
         admin = db.execute(
-            "SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+            "SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
         ).fetchone()
 
         if not admin:
@@ -480,6 +490,7 @@ def reset_admin_password(tenant_id):
                 'errore': 'Nessun admin trovato in questo tenant.'
             }), 404
 
+        admin_username = admin['username']
         db.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             (new_hash, admin['id'])
@@ -496,7 +507,8 @@ def reset_admin_password(tenant_id):
 
     return jsonify({
         'ok': True,
-        'messaggio': f"Password admin di '{tenant['nome']}' resettata.",
+        'messaggio': f"Password di {admin_username} ('{tenant['nome']}') resettata.",
+        'admin_username': admin_username,
         'nuova_password': new_password
     }), 200
 

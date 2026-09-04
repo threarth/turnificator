@@ -31,6 +31,12 @@ TIPO_NORMALE = 'normale'
 TIPO_FESTIVO = 'festivo'
 TIPO_SUPERFESTIVO = 'superfestivo'
 
+# Chiavi con cui le date festive viaggiano fra chi le calcola e chi classifica
+# i giorni. Sono i plurali dei tipi, ma scritte: derivarle dal singolare e'
+# stato un errore che ha prodotto 'festivoi'.
+CHIAVE_FESTIVI = 'festivi'
+CHIAVE_SUPERFESTIVI = 'superfestivi'
+
 
 def leggi_giorni_lavorativi(config):
     """
@@ -55,6 +61,95 @@ def leggi_giorni_lavorativi(config):
             giorni.add(int(pezzo))
 
     return giorni or set(GIORNI_LAVORATIVI_DEFAULT)
+
+
+def pasqua(anno):
+    """
+    La domenica di Pasqua di un anno, con l'algoritmo di Gauss.
+
+    Serve perche' due festivita' su tredici non hanno una data fissa: Pasqua
+    e il lunedi' dopo si spostano ogni anno, e con loro tutto cio' che si
+    conta a partire da li'.
+
+    Args:
+        anno (int): anno gregoriano.
+
+    Returns:
+        datetime.date: la domenica di Pasqua.
+    """
+    a = anno % 19
+    b = anno // 100
+    c = anno % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mese = (h + l - 7 * m + 114) // 31
+    giorno = ((h + l - 7 * m + 114) % 31) + 1
+
+    return datetime.date(anno, mese, giorno)
+
+
+def data_della_ricorrenza(ricorrenza, anno):
+    """
+    La data che una ricorrenza assume in un dato anno.
+
+    Una ricorrenza o cade sempre nello stesso giorno dell'anno, o si conta
+    dalla Pasqua. Le due cose si escludono, e lo schema lo impone.
+
+    Args:
+        ricorrenza (dict): riga di `festivita`, con giorno, mese, offset_pasqua.
+        anno (int): anno per cui calcolarla.
+
+    Returns:
+        datetime.date|None: la data, o None se la riga non individua un giorno
+                            valido — un 29 febbraio in un anno non bisestile,
+                            per dire, che semplicemente non cade.
+    """
+    offset = ricorrenza.get('offset_pasqua')
+    if offset is not None:
+        return pasqua(anno) + datetime.timedelta(days=int(offset))
+
+    giorno, mese = ricorrenza.get('giorno'), ricorrenza.get('mese')
+    if giorno is None or mese is None:
+        return None
+
+    try:
+        return datetime.date(anno, int(mese), int(giorno))
+    except ValueError:
+        return None
+
+
+def espandi_festivita(ricorrenze, anno):
+    """
+    Traduce le ricorrenze configurate nelle date concrete di un anno.
+
+    Args:
+        ricorrenze (iterable): righe di `festivita` attive.
+        anno (int): anno del calendario.
+
+    Returns:
+        dict: {'festivi': [iso], 'superfestivi': [iso]}, nella forma che
+              classifica_giorno() sa gia' leggere.
+    """
+    esito = {CHIAVE_FESTIVI: [], CHIAVE_SUPERFESTIVI: []}
+
+    for r in ricorrenze or []:
+        if not r.get('is_active', 1):
+            continue
+        data = data_della_ricorrenza(r, anno)
+        if data is None:
+            continue
+        chiave = (CHIAVE_SUPERFESTIVI if r.get('tipo') == TIPO_SUPERFESTIVO
+                  else CHIAVE_FESTIVI)
+        esito[chiave].append(data.isoformat())
+
+    return esito
 
 
 def classifica_giorno(data, festivita, giorni_lavorativi):

@@ -580,6 +580,50 @@ CREATE TABLE IF NOT EXISTS regole_conflitto (
 -- =============================================================================
 
 -- =============================================================================
+-- TABELLA: festivita
+-- Le ricorrenze che rendono festivo un giorno del calendario.
+--
+-- Sono regole, non date: una festivita' o cade sempre nello stesso giorno
+-- dell'anno (giorno + mese), oppure si conta dalla Pasqua (offset_pasqua),
+-- che si sposta ogni anno. Le date concrete si ricavano quando si crea un
+-- calendario, per l'anno di quel calendario.
+--
+-- Sono per tenant: il santo patrono e' un dato dell'installazione, non del
+-- programma. Le domeniche non stanno qui — quelle le sa il calendario.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS festivita (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome          TEXT    NOT NULL UNIQUE,
+    giorno        INTEGER,   -- 1-31; NULL se la data si conta dalla Pasqua
+    mese          INTEGER,   -- 1-12; NULL se la data si conta dalla Pasqua
+    offset_pasqua INTEGER,   -- giorni dalla Pasqua; NULL se la data e' fissa
+    tipo          TEXT    NOT NULL DEFAULT 'superfestivo'
+                      CHECK(tipo IN ('festivo', 'superfestivo')),
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    -- O una data fissa, o un conto dalla Pasqua: senza nessuno dei due la
+    -- riga non individua nessun giorno.
+    CHECK ((giorno IS NOT NULL AND mese IS NOT NULL) OR offset_pasqua IS NOT NULL)
+);
+
+-- Le festivita' nazionali italiane, piu' il patrono. Sono un punto di
+-- partenza: si tolgono e se ne aggiungono dal pannello di configurazione.
+INSERT OR IGNORE INTO festivita (nome, giorno, mese, offset_pasqua, tipo) VALUES
+    ('Capodanno',                1,  1,    NULL, 'superfestivo'),
+    ('Epifania',                 6,  1,    NULL, 'superfestivo'),
+    ('Pasqua',                   NULL, NULL,   0, 'superfestivo'),
+    ('Lunedi dell''Angelo',      NULL, NULL,   1, 'superfestivo'),
+    ('Liberazione',             25,  4,    NULL, 'superfestivo'),
+    ('Festa dei Lavoratori',     1,  5,    NULL, 'superfestivo'),
+    ('Festa della Repubblica',   2,  6,    NULL, 'superfestivo'),
+    -- Patrono di Roma: chi sta altrove ha il suo, e questo lo disattiva.
+    ('Santi Pietro e Paolo',    29,  6,    NULL, 'superfestivo'),
+    ('Ferragosto',              15,  8,    NULL, 'superfestivo'),
+    ('Ognissanti',               1, 11,    NULL, 'superfestivo'),
+    ('Immacolata',               8, 12,    NULL, 'superfestivo'),
+    ('Natale',                  25, 12,    NULL, 'superfestivo'),
+    ('Santo Stefano',           26, 12,    NULL, 'superfestivo');
+
+-- =============================================================================
 -- TABELLA: style_history
 -- Storico delle modifiche di formattazione (per undo).
 -- =============================================================================
@@ -782,12 +826,18 @@ INSERT OR IGNORE INTO preset_ottimizzazione (nome, tipo, ref_id, pesi, is_defaul
 -- (sovragruppo_id), e su fresh init via executescript con FK ON, l'INSERT
 -- fallirebbe se sovragruppi non e' stata ancora creata.
 -- =============================================================================
--- Account admin del tenant. Il nome distingue questo livello dall'admin di
--- piattaforma (superadmin, in master_users): vedi la sezione "Role hierarchy"
--- in CLAUDE.md. Password di sviluppo uguale allo username, da cambiare.
+-- Account admin del tenant. Gli amministratori di tenant sono numerati —
+-- admin1, admin2 — e il numero segue il tenant: il primo qui e' l'admin1
+-- dell'installazione. Sopra di loro, in master_users, c'e' il superadmin di
+-- piattaforma: vedi la sezione "Role hierarchy" in CLAUDE.md.
+--
+-- Password di sviluppo uguale allo username. Vale per l'installazione
+-- dimostrativa: un tenant creato dal master **non** passa di qui, perche' il
+-- provisioning cancella ogni admin preesistente e ne crea uno con una
+-- password generata.
 INSERT OR IGNORE INTO users (username, password_hash, role, sigla) VALUES
-    ('admin_uo',
-     '$2b$12$viq/F2pPWIK20e4lrq8gROG2wxBnIM0xbTi//pLIfRo1P78gAPbC.',
+    ('admin1',
+     '$2b$12$81Ip8MB4eH6umVvq/mCw.uXr7.jScVwxdlbaNJ55UD9YeAB69btGK',
      'admin',
-     'AUO');
+     'ADM');
 

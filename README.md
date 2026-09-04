@@ -159,7 +159,7 @@ finche' non vengono cambiate, e vanno rigenerate prima di qualunque uso reale.
 | Ruolo | Utente | Dove |
 |---|---|---|
 | Piattaforma | `superadmin` | pagina `/master`, form dedicato |
-| Admin unita' operativa | `admin_uo` | login normale, organizzazione `default` |
+| Admin unita' operativa | `admin1` | login normale, organizzazione `default` |
 | Manager | `rossi` | login normale, organizzazione `default` |
 | Lavoratore | `conti` | login normale, organizzazione `default` |
 

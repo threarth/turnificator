@@ -57,12 +57,15 @@ def tenant_b(client, master_token, auth, _test_env):
     # Password nota per l'admin generato, cosi' il login non dipende da quale
     # dei due admin il reset password vada a colpire.
     db = _open_sqlcipher(percorso, chiave)
-    db.execute("UPDATE users SET password_hash=? WHERE username='admin'",
-               (_bcrypt_hash(PASSWORD_B),))
+    admin = db.execute(
+        "SELECT username FROM users WHERE role='admin' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.execute("UPDATE users SET password_hash=? WHERE username=?",
+               (_bcrypt_hash(PASSWORD_B), admin['username']))
     db.commit()
 
     return {
-        'slug': SLUG_B, 'username': 'admin', 'password': PASSWORD_B,
+        'slug': SLUG_B, 'username': admin['username'], 'password': PASSWORD_B,
         'path': percorso, 'chiave': chiave,
     }
 
@@ -326,7 +329,7 @@ def test_le_room_websocket_portano_il_tenant():
 # L'admin che lo schema semina, con la password scritta in init_db.sql e nel
 # README. Va bene per l'installazione dimostrativa; in un tenant creato dal
 # master sarebbe una porta aperta a chiunque conosca lo slug.
-UTENTE_SEED_SCHEMA = 'admin_uo'
+UTENTE_SEED_SCHEMA = 'admin1'
 
 
 def test_un_tenant_nuovo_non_nasce_con_una_password_nota(client, tenant_b):
@@ -354,8 +357,46 @@ def test_un_tenant_nuovo_ha_un_solo_amministratore(client, tenant_b, _test_env):
     password generata al provisioning non e' l'unica via d'ingresso.
     """
     db = _open_sqlcipher(tenant_b['path'], tenant_b['chiave'])
-    admin = db.execute(
+    admin = [r['username'] for r in db.execute(
         "SELECT username FROM users WHERE role='admin' AND is_active=1"
-    ).fetchall()
+    )]
 
-    assert [r['username'] for r in admin] == ['admin']
+    assert len(admin) == 1, f'amministratori nel tenant nuovo: {admin}'
+    # Il nome porta il numero del tenant: admin1 per il primo, admin2 per il
+    # secondo. Qui il numero dipende da quanti ne sono stati creati.
+    assert admin[0].startswith('admin') and admin[0][len('admin'):].isdigit()
+
+
+def test_l_ultimo_amministratore_non_si_puo_togliere(client, admin_token, auth):
+    """
+    Ora che il ruolo si cambia dalla configurazione guidata, l'errore piu'
+    facile e' togliersi l'amministrazione da soli: dopo, il tenant non si
+    riconfigura piu' da dentro.
+    """
+    utenti = client.get('/api/admin/users', headers=auth(admin_token)).get_json()['utenti']
+    admin = [u for u in utenti if u['role'] == 'admin' and u['is_active']]
+    assert len(admin) == 1, 'il tenant di prova deve avere un solo amministratore'
+
+    rv = client.put(f"/api/admin/users/{admin[0]['id']}",
+                    json={'role': 'manager'}, headers=auth(admin_token))
+    assert rv.status_code == 409, rv.get_json()
+    assert 'unico amministratore' in rv.get_json()['errore']
+
+    rv = client.put(f"/api/admin/users/{admin[0]['id']}",
+                    json={'is_active': 0}, headers=auth(admin_token))
+    assert rv.status_code == 409, rv.get_json()
+
+
+def test_un_amministratore_si_puo_togliere_se_ce_n_e_un_altro(client, admin_token, auth):
+    """Il vincolo protegge l'ultimo, non impedisce di cambiare le persone."""
+    utenti = client.get('/api/admin/users', headers=auth(admin_token)).get_json()['utenti']
+    admin = next(u for u in utenti if u['role'] == 'admin' and u['is_active'])
+    manager = next(u for u in utenti if u['sigla'] == 'MGR')
+
+    rv = client.put(f"/api/admin/users/{manager['id']}",
+                    json={'role': 'admin'}, headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()
+
+    rv = client.put(f"/api/admin/users/{admin['id']}",
+                    json={'role': 'manager'}, headers=auth(admin_token))
+    assert rv.status_code == 200, rv.get_json()

@@ -8,6 +8,12 @@ Endpoint:
         PUT    /api/admin/users/<id>               → modifica utente
         DELETE /api/admin/users/<id>               → disabilita utente
 
+    Festivita' (ricorrenze che rendono festivo un giorno):
+        GET    /api/admin/festivita?anno=      → ricorrenze con le date dell'anno
+        POST   /api/admin/festivita            → aggiunge una ricorrenza
+        PUT    /api/admin/festivita/<id>       → modifica o spegne
+        DELETE /api/admin/festivita/<id>       → elimina
+
     Flag turno (globali, con gerarchia parent e ore/peso):
         GET    /api/admin/flag-turno               → lista flag
         POST   /api/admin/flag-turno               → crea flag
@@ -75,7 +81,9 @@ from app.auth import require_role, get_current_user, hash_password
 from app.db import query_one, query_all, execute_write, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
 from app.services.calendario_giorni import (
-    classifica_giorno, leggi_giorni_lavorativi
+    TIPO_FESTIVO, TIPO_SUPERFESTIVO,
+    classifica_giorno, data_della_ricorrenza, espandi_festivita,
+    leggi_giorni_lavorativi
 )
 from app.services.config_snapshot import crea_config_snapshot
 from app.services.proposte import (
@@ -703,6 +711,10 @@ def _coerce_sovragruppo_id(v):
     return iv
 
 # campi ammessi nelle modifiche utente (singola o bulk)
+# Il ruolo che puo' configurare il tenant. Senza almeno uno attivo,
+# l'organizzazione non si amministra piu' da dentro.
+RUOLO_AMMINISTRATORE = 'admin'
+
 USER_FIELDS = {
     'username':              lambda v: str(v).strip(),
     'role':                  _coerce_role,
@@ -774,12 +786,52 @@ def crea_utente():
                     'messaggio': f'Utente {sigla} creato.'}), 201
 
 
+def _toglie_l_ultimo_amministratore(uid, fields):
+    """
+    La modifica lascerebbe il tenant senza amministratori attivi?
+
+    Un tenant senza amministratore non si riconfigura piu' da dentro: per
+    rientrare servirebbe il superadmin di piattaforma. Vale sia per il
+    cambio di ruolo sia per la disattivazione.
+
+    Args:
+        uid (int): utente che si sta modificando.
+        fields (dict): campi in arrivo.
+
+    Returns:
+        bool: True se dopo la modifica non resterebbe nessun amministratore.
+    """
+    perde_il_ruolo = 'role' in fields and fields['role'] != RUOLO_AMMINISTRATORE
+    viene_disattivato = 'is_active' in fields and not _coerce_bool_int(fields['is_active'])
+    if not (perde_il_ruolo or viene_disattivato):
+        return False
+
+    attuale = query_one(
+        "SELECT role, is_active FROM users WHERE id = ?", (uid,)
+    )
+    if not attuale or attuale['role'] != RUOLO_AMMINISTRATORE or not attuale['is_active']:
+        return False
+
+    altri = query_one(
+        "SELECT COUNT(*) AS quanti FROM users "
+        "WHERE role = ? AND is_active = 1 AND id != ?",
+        (RUOLO_AMMINISTRATORE, uid)
+    )
+
+    return not altri['quanti']
+
+
 def _apply_user_fields(uid, fields):
     """
     Applica i campi `fields` all'utente uid.
     Gestisce anche gli effetti collaterali (password, escluso_turni→svuota assegnazioni).
     Ritorna (None, None) in caso di successo, (errore, status_code) altrimenti.
     """
+    if _toglie_l_ultimo_amministratore(uid, fields):
+        return ('Questo e\' l\'unico amministratore attivo: togliergli il ruolo '
+                'lascerebbe l\'organizzazione senza nessuno che possa '
+                'configurarla. Nominane un altro prima.'), 409
+
     aggiornamenti = []
     valori = []
     escludi = None
@@ -3226,46 +3278,192 @@ def solver_utenti_riepilogo():
 # =============================================================================
 
 def _calcola_festivita(anno):
-    import datetime
+    """
+    Le date festive di un anno, dalle ricorrenze configurate nel tenant.
 
-    def pasqua(y):
-        a = y % 19
-        b = y // 100
-        c = y % 100
-        d = b // 4
-        e = b % 4
-        f = (b + 8) // 25
-        g = (b - f + 1) // 3
-        h = (19 * a + b - d - g + 15) % 30
-        i = c // 4
-        k = c % 4
-        l = (32 + 2 * e + 2 * i - h - k) % 7
-        m = (a + 11 * h + 22 * l) // 451
-        month = (h + l - 7 * m + 114) // 31
-        day   = ((h + l - 7 * m + 114) % 31) + 1
-        return datetime.date(y, month, day)
+    Erano scritte nel codice, uguali per tutti: il santo patrono di Roma
+    finiva festivo anche a Torino. Ora stanno in tabella, seminate con le
+    nazionali italiane e modificabili da chi configura.
 
-    p = pasqua(anno)
-    pasquetta = p + __import__('datetime').timedelta(days=1)
+    Args:
+        anno (int): anno del calendario.
 
-    superfestivi = [
-        datetime.date(anno, 1,  1).isoformat(),   # Capodanno
-        datetime.date(anno, 1,  6).isoformat(),   # Epifania
-        p.isoformat(),                              # Pasqua
-        pasquetta.isoformat(),                      # Lunedì dell'Angelo
-        datetime.date(anno, 4, 25).isoformat(),    # Liberazione
-        datetime.date(anno, 5,  1).isoformat(),    # Festa dei Lavoratori
-        datetime.date(anno, 6,  2).isoformat(),    # Festa della Repubblica
-        datetime.date(anno, 6, 29).isoformat(),    # Santi Pietro e Paolo
-        datetime.date(anno, 8, 15).isoformat(),    # Ferragosto
-        datetime.date(anno, 11, 1).isoformat(),    # Ognissanti
-        datetime.date(anno, 12, 8).isoformat(),    # Immacolata
-        datetime.date(anno, 12, 25).isoformat(),   # Natale
-        datetime.date(anno, 12, 26).isoformat(),   # Santo Stefano
-    ]
-    # festivi vuoto: le domeniche sono gestite dal weekday check in crea_calendario()
-    # TODO: superfestività diventeranno tabella CRUD nel pannello Configurazione
-    return {'superfestivi': superfestivi, 'festivi': []}
+    Returns:
+        dict: {'festivi': [iso], 'superfestivi': [iso]}.
+    """
+    return espandi_festivita(
+        query_all(
+            "SELECT nome, giorno, mese, offset_pasqua, tipo, is_active "
+            "FROM festivita WHERE is_active = 1", ()
+        ),
+        int(anno)
+    )
+
+
+# =============================================================================
+# FESTIVITA' — le ricorrenze che rendono festivo un giorno
+# =============================================================================
+
+# Quanti giorni prima o dopo la Pasqua puo' cadere una ricorrenza: oltre, non
+# e' piu' una festivita' legata alla Pasqua ma un'altra cosa.
+OFFSET_PASQUA_MAX = 70
+
+TIPI_FESTIVITA = (TIPO_FESTIVO, TIPO_SUPERFESTIVO)
+
+
+def _leggi_ricorrenza(dati, correnti=None):
+    """
+    Estrae e valida una ricorrenza dal payload.
+
+    Una festivita' o ha una data fissa (giorno e mese) o si conta dalla
+    Pasqua: le due si escludono, e senza nessuna delle due la riga non
+    individua nessun giorno.
+
+    Args:
+        dati (dict): payload della richiesta.
+        correnti (dict|None): riga esistente, sulla PUT.
+
+    Returns:
+        tuple: (dict con i campi, None) oppure ({}, messaggio d'errore).
+    """
+    correnti = correnti or {}
+
+    nome = (dati.get('nome') if 'nome' in dati else correnti.get('nome')) or ''
+    nome = str(nome).strip()
+    if not nome:
+        return {}, 'Il nome della festivita e obbligatorio.'
+
+    def numero(campo):
+        grezzo = dati.get(campo, correnti.get(campo))
+        if grezzo is None or grezzo == '':
+            return None
+        try:
+            return int(grezzo)
+        except (TypeError, ValueError):
+            raise ValueError(campo)
+
+    try:
+        giorno, mese, offset = numero('giorno'), numero('mese'), numero('offset_pasqua')
+    except ValueError as e:
+        return {}, f'Valore non numerico per {e}.'
+
+    if offset is not None:
+        if not -OFFSET_PASQUA_MAX <= offset <= OFFSET_PASQUA_MAX:
+            return {}, 'La distanza dalla Pasqua e fuori scala.'
+        giorno = mese = None
+    else:
+        if giorno is None or mese is None:
+            return {}, 'Servono giorno e mese, oppure la distanza dalla Pasqua.'
+        if not 1 <= mese <= 12 or not 1 <= giorno <= 31:
+            return {}, 'Giorno o mese fuori intervallo.'
+
+    tipo = dati.get('tipo', correnti.get('tipo', TIPO_SUPERFESTIVO))
+    if tipo not in TIPI_FESTIVITA:
+        tipo = TIPO_SUPERFESTIVO
+
+    attiva = dati.get('is_active', correnti.get('is_active', 1))
+
+    return {
+        'nome': nome, 'giorno': giorno, 'mese': mese, 'offset_pasqua': offset,
+        'tipo': tipo, 'is_active': int(bool(attiva)),
+    }, None
+
+
+@bp.route('/festivita', methods=['GET'])
+@require_role('admin', 'manager')
+def lista_festivita():
+    """
+    Le ricorrenze configurate, con le date che assumono in un anno.
+
+    Query string:
+        anno (int): anno per cui calcolare le date; senza, quello corrente.
+    """
+    try:
+        anno = int(request.args.get('anno') or datetime.now().year)
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'errore': 'Anno non valido.'}), 400
+
+    righe = query_all(
+        "SELECT id, nome, giorno, mese, offset_pasqua, tipo, is_active "
+        "FROM festivita ORDER BY offset_pasqua IS NULL DESC, mese, giorno, nome",
+        ()
+    )
+    for r in righe:
+        data = data_della_ricorrenza(r, anno)
+        r['data'] = data.isoformat() if data else None
+
+    return jsonify({'ok': True, 'anno': anno, 'festivita': righe}), 200
+
+
+@bp.route('/festivita', methods=['POST'])
+@require_role('admin')
+def crea_festivita():
+    """Aggiunge una ricorrenza."""
+    dati = request.get_json(silent=True) or {}
+    campi, errore = _leggi_ricorrenza(dati)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    if query_one("SELECT id FROM festivita WHERE nome=?", (campi['nome'],)):
+        return jsonify({
+            'ok': False, 'errore': f"Festivita \"{campi['nome']}\" gia presente."
+        }), 409
+
+    cur = execute_write(
+        "INSERT INTO festivita (nome, giorno, mese, offset_pasqua, tipo, is_active) "
+        "VALUES (?,?,?,?,?,?)",
+        (campi['nome'], campi['giorno'], campi['mese'], campi['offset_pasqua'],
+         campi['tipo'], campi['is_active'])
+    )
+
+    return jsonify({'ok': True, 'id': cur.lastrowid}), 201
+
+
+@bp.route('/festivita/<int:fid>', methods=['PUT'])
+@require_role('admin')
+def modifica_festivita(fid):
+    """Modifica una ricorrenza, o la spegne senza cancellarla."""
+    corrente = query_one("SELECT * FROM festivita WHERE id=?", (fid,))
+    if not corrente:
+        return jsonify({'ok': False, 'errore': 'Festivita non trovata.'}), 404
+
+    dati = request.get_json(silent=True) or {}
+    campi, errore = _leggi_ricorrenza(dati, corrente)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    dup = query_one("SELECT id FROM festivita WHERE nome=? AND id!=?",
+                    (campi['nome'], fid))
+    if dup:
+        return jsonify({
+            'ok': False, 'errore': f"Nome \"{campi['nome']}\" gia in uso."
+        }), 409
+
+    execute_write(
+        "UPDATE festivita SET nome=?, giorno=?, mese=?, offset_pasqua=?, "
+        "tipo=?, is_active=? WHERE id=?",
+        (campi['nome'], campi['giorno'], campi['mese'], campi['offset_pasqua'],
+         campi['tipo'], campi['is_active'], fid)
+    )
+
+    return jsonify({'ok': True, 'messaggio': 'Festivita aggiornata.'}), 200
+
+
+@bp.route('/festivita/<int:fid>', methods=['DELETE'])
+@require_role('admin')
+def elimina_festivita(fid):
+    """
+    Elimina una ricorrenza.
+
+    I calendari gia' creati non cambiano: la classificazione dei loro giorni
+    e' scritta in `giorni_calendario` al momento della creazione.
+    """
+    if not query_one("SELECT id FROM festivita WHERE id=?", (fid,)):
+        return jsonify({'ok': False, 'errore': 'Festivita non trovata.'}), 404
+
+    execute_write("DELETE FROM festivita WHERE id=?", (fid,))
+
+    return jsonify({'ok': True, 'messaggio': 'Festivita eliminata.'}), 200
 
 
 # =============================================================================

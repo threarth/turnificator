@@ -26,7 +26,6 @@
     let formNome = '';
     let formSlug = '';
     let formTemplateId = '';
-    let formAdminUser = 'admin';
     let formLoading = false;
     let formErrore = '';
 
@@ -87,7 +86,6 @@
         const body = {
             nome: formNome.trim(),
             slug: formSlug.trim(),
-            admin_username: formAdminUser.trim() || 'admin',
         };
         if (formTemplateId) body.template_id = parseInt(formTemplateId);
 
@@ -99,11 +97,10 @@
             return;
         }
 
-        successo = `Tenant "${formNome}" creato. Password admin: ${res.admin_password || '(vedi log server)'}`;
+        successo = `Tenant "${formNome}" creato. Amministratore: ${res.admin_username || 'admin'} / ${res.admin_password || '(vedi log server)'} — da comunicare, e da far cambiare al primo accesso.`;
         formNome = '';
         formSlug = '';
         formTemplateId = '';
-        formAdminUser = 'admin';
         showForm = false;
         await caricaDati();
     }
@@ -142,7 +139,7 @@
         if (res.ok === false) {
             errore = res.errore || 'Errore reset.';
         } else {
-            successo = `Nuova password admin di "${t.nome}": ${res.new_password || '(vedi log)'}`;
+            successo = `Nuova password di ${res.admin_username || 'admin'} ("${t.nome}"): ${res.nuova_password || '(vedi log)'}`;
         }
     }
 
@@ -233,9 +230,12 @@
                         </select>
                     </div>
                     <div class="col-md-2">
-                        <label class="form-label fw-semibold">Admin user</label>
-                        <input class="form-control" bind:value={formAdminUser}
-                               placeholder="admin" />
+                        <div class="form-label fw-semibold">Amministratore</div>
+                        <p class="form-text mb-0">
+                            Si chiamerà <code>admin{tenants.length + 1}</code>: il
+                            numero segue il tenant. Password generata alla
+                            creazione e mostrata qui una volta sola.
+                        </p>
                     </div>
                 </div>
                 {#if formErrore}

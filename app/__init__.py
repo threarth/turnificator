@@ -31,6 +31,7 @@ from app.services.validatori import (
     PESO_COMPOSIZIONE_PARZIALE, STILE_COMPOSIZIONE_PARZIALE,
     TIPO_REGOLA_COMPOSIZIONE_PARZIALE
 )
+from app.services.utenti import SIGLA_ADMIN, nome_admin_tenant
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +71,9 @@ MIGRAZIONE_ROOT_SU_FASCIA = {
 #
 # ROMC non conta: il recupero del mese corrente e' gia' contabilizzato dalle
 # ore lavorate, sommarlo di nuovo le raddoppierebbe.
+# Il nome che gli amministratori di tenant avevano prima della numerazione.
+NOME_ADMIN_STORICO = 'admin_uo'
+
 TIPI_RICHIESTA_DEFAULT = [
     ('M',     'Mattina',                       'lavorativo', 1,  10),
     ('P',     'Pomeriggio',                    'lavorativo', 1,  20),
@@ -299,6 +303,7 @@ def _migra_singolo_tenant(app, slug):
 
         _migra_colonne(db)
         _migra_flag_e_regole(db)
+        _rinomina_admin_tenant(db)
         _pulisci_style_history(db)
 
         # Chiudi e pulisci per non interferire con altri tenant
@@ -894,6 +899,52 @@ def _inserisci_regole_default_nuove(db):
         db.commit()
     except Exception as e:
         log.warning('Inserimento regole default fallito: %s', e)
+
+
+def _rinomina_admin_tenant(db):
+    """
+    Porta il vecchio `admin_uo` alla numerazione: admin1, admin2, ...
+
+    Gli amministratori di tenant sono numerati e il numero segue il tenant;
+    sopra di loro c'e' il superadmin di piattaforma. Il nome storico
+    `admin_uo` non diceva quale tenant fosse.
+
+    Cambia solo il nome e la sigla, non la password: chi l'aveva cambiata se
+    la tiene. Non fa niente se `admin1` esiste gia' — due amministratori con
+    lo stesso nome non stanno nella stessa tabella.
+
+    Idempotente.
+    """
+    try:
+        vecchio = db.execute(
+            "SELECT id FROM users WHERE username=?", (NOME_ADMIN_STORICO,)
+        ).fetchone()
+        if not vecchio:
+            return
+
+        occupato = db.execute(
+            "SELECT id FROM users WHERE username=?", (nome_admin_tenant(1),)
+        ).fetchone()
+        if occupato:
+            return
+
+        sigla_libera = not db.execute(
+            "SELECT id FROM users WHERE sigla=? AND id!=?",
+            (SIGLA_ADMIN, vecchio[0])
+        ).fetchone()
+
+        if sigla_libera:
+            db.execute("UPDATE users SET username=?, sigla=? WHERE id=?",
+                       (nome_admin_tenant(1), SIGLA_ADMIN, vecchio[0]))
+        else:
+            db.execute("UPDATE users SET username=? WHERE id=?",
+                       (nome_admin_tenant(1), vecchio[0]))
+        db.commit()
+        log.info('Amministratore del tenant rinominato: %s → %s',
+                 NOME_ADMIN_STORICO, nome_admin_tenant(1))
+    except Exception as e:
+        db.rollback()
+        log.warning('Rinomina dell amministratore del tenant fallita: %s', e)
 
 
 def _estendi_tipi_regola(db):

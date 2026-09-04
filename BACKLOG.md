@@ -108,7 +108,7 @@ passando dalle API del master):
 ### Chiuso strada facendo
 
 **Ogni tenant creato dal master nasceva con una porta aperta.** Lo schema
-semina un amministratore `admin_uo` la cui password sta in `init_db.sql` e nel
+semina un amministratore (`admin1`, allora `admin_uo`) la cui password sta in `init_db.sql` e nel
 README; il provisioning generava una password forte per un *altro* account
 (`admin`) e cancellava solo quello, lasciando il primo intatto e attivo.
 Chiunque conoscesse lo slug — che il menu del login mostra — entrava come
@@ -126,10 +126,10 @@ amministratore preesistente. Due test lo fissano.
 - **Le room websocket hanno un ripiego senza tenant** (`calendar_<id>` quando
   lo slug manca). Nessuno ci entra mai — l'ingresso richiede lo slug — ma
   meglio non emettere che emettere in una room condivisa.
-- **Le festività sono inchiodate nel codice** (`_calcola_festivita` in
-  `admin.py`, già con un TODO) e includono i Santi Pietro e Paolo, che è il
-  patrono di Roma: un tenant altrove si trova un festivo che non è suo. Il
-  santo patrono è per definizione un dato per installazione.
+- ~~Le festività inchiodate nel codice~~ — fatto: sono ricorrenze in tabella
+  (`festivita`), seminate con le nazionali italiane e modificabili dalla
+  sezione *Giorni lavorativi*. Il patrono si spegne. Resta fuori dalle
+  proposte del master: sarebbero vocabolario, ma nessuno l'ha chiesto.
 
 ---
 

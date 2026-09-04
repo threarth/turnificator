@@ -45,7 +45,7 @@ NOME_PRESET = 'struttura_demo'
 # Account di piattaforma e di tenant. La password coincide con lo username:
 # credenziale di sviluppo, da cambiare prima di qualunque uso reale.
 UTENTE_PIATTAFORMA = 'superadmin'
-UTENTE_ADMIN_TENANT = ('admin_uo', 'AUO', 'admin')
+UTENTE_ADMIN_TENANT = ('admin1', 'ADM', 'admin')
 
 # Cognomi di fantasia a 5 lettere per il personale demo.
 COGNOMI_DEMO = [

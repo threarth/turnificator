@@ -98,13 +98,13 @@ Two distinct authority levels, deliberately named apart to avoid confusion:
 | Level | Where | Username | Can do |
 |---|---|---|---|
 | `master_admin` | `master.db` / `master_users` | `superadmin` | **Top of the hierarchy.** Create/disable tenants, manage templates, reset any tenant admin's password, impersonate a tenant admin (logged in `impersonation_log` + notified to the tenant) |
-| `admin` | `tenants/*.db` / `users` | `admin_uo` | Full authority **inside its own tenant** only: structure, calendars, users. No visibility across tenants |
+| `admin` | `tenants/*.db` / `users` | `admin1`, `admin2`, … | Full authority **inside its own tenant** only: structure, calendars, users. No visibility across tenants. The number follows the tenant: `admin2` administers the second one |
 | `manager` | `tenants/*.db` / `users` | — | Shift assignments, working desiderata (subject to access whitelist) |
 | `basic` | `tenants/*.db` / `users` | — | Own desiderata only |
 
 The master admin logs in via `/api/master/login` and is guarded by `require_master_role()`; tenant roles use `require_role(*roles)`.
 
-- Dev credentials: every seeded account uses `password == username` (`superadmin`/`superadmin`, `admin_uo`/`admin_uo`). **Development only — regenerate before any production use.**
+- Dev credentials: every seeded account uses `password == username` (`superadmin`/`superadmin`, `admin1`/`admin1`). **Development only — regenerate before any production use.** A tenant created through the master API does *not* get this: provisioning deletes every pre-existing admin and creates `admin<N>` with a generated password, shown once to the superadmin.
 
 ### Data Model (key tables)
 - **3-tier shift hierarchy**: `sovragruppi` → `gruppi` (type: mattina/pomeriggio/notte/altro) → `turni`
