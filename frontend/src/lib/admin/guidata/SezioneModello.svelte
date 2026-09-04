@@ -116,6 +116,9 @@
             Le sezioni <strong>{'Strutture'}</strong> e <strong>I turni</strong>
             di questa procedura puoi saltarle: quello che avresti costruito lì
             c'è già.
+            <br />
+            Per vederla e rifinirla, la scheda <strong>Struttura turni</strong>
+            qui sopra: adesso è attiva.
         </p>
 
         {#if esito.avvisi?.length}

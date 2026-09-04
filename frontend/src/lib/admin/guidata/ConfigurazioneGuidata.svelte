@@ -65,6 +65,7 @@
     export let onvocabolarioaggiornato;
     export let onregoleaggiornate;
     export let onconfigaggiornata;
+    export let onstrutturaimportata;
 
     // Nomi comuni per la struttura, con il loro plurale gia' corretto:
     // sceglierli da un elenco evita di doverlo indovinare dal singolare.
@@ -104,10 +105,15 @@
     // mano non servono piu', e dirlo evita di crearne una seconda per sbaglio.
     let strutturaDaFoglio = false;
 
-    /** Dopo un import: utenti e tipologie sono cambiati sotto i piedi. */
+    /**
+     * Dopo un import dal foglio: utenti, tipologie e — soprattutto — la
+     * struttura turni sono cambiati sotto i piedi. Senza avvisare chi ci
+     * contiene, la scheda che la modifica resta spenta su dati vecchi.
+     */
     async function ricaricaDopoImport() {
         await onutentiaggiornati?.();
         await ontipologieaggiornate?.();
+        await onstrutturaimportata?.();
     }
 
     // Etichetta personalizzata: attiva quando nessun suggerimento va bene.

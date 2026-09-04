@@ -955,7 +955,9 @@
   async function wizardCompletato(presetId, etichetta) {
     etichettaStruttura.set(etichetta);
     presets = (await adminApi.getPresets()).presets ?? [];
-    tab = 'strutturaturni';
+    // Solo se una struttura c'e' davvero: mandare a una scheda spenta
+    // lascerebbe la pagina su un caricamento che non finisce.
+    if (strutturaDelTenant) tab = 'strutturaturni';
     setMsg('stru', 'Struttura turni salvata. Puoi rifinirla qui.');
   }
 
@@ -2828,12 +2830,25 @@
                              }}
                              onconfigaggiornata={async () => {
                                config = (await adminApi.getConfig()).config ?? {};
+                             }}
+                             onstrutturaimportata={async () => {
+                               // Un import dal foglio cambia struttura, persone e
+                               // tipologie insieme: si ricarica tutto, invece di
+                               // inseguire un pezzo per volta.
+                               editPreset = null;
+                               await caricaTutto();
                              }} />
 
   {:else if tab === 'strutturaturni'}
     {#if msgStruttura}<div class="alert py-2 small {msgStruttura.startsWith('✓')?'alert-success':'alert-danger'}">{msgStruttura}</div>{/if}
 
-    {#if !editPreset}
+    {#if !strutturaDelTenant}
+      <div class="text-muted small">
+        Questa organizzazione non ha ancora una struttura turni: creala dalla
+        <button class="btn btn-link btn-sm p-0 align-baseline"
+                on:click={() => tab = 'struttura'}>configurazione guidata</button>.
+      </div>
+    {:else if !editPreset}
       <div class="text-muted small">Caricamento della struttura turni…</div>
     {:else}
       <!-- ── Editor preset ── -->
