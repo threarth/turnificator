@@ -580,6 +580,22 @@ CREATE TABLE IF NOT EXISTS regole_conflitto (
 -- =============================================================================
 
 -- =============================================================================
+-- TABELLA: modello_turni
+-- Il foglio Excel da cui questa organizzazione ha preso la struttura, e in
+-- cui riesporta i mesi programmati.
+--
+-- Sta nel tenant, cifrato con il suo database: il foglio descrive reparti,
+-- turni e persone di quella organizzazione e non deve uscire dal suo
+-- perimetro. Uno solo per tenant — caricarne un altro sostituisce il primo.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS modello_turni (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    nome_file   TEXT    NOT NULL,
+    contenuto   BLOB    NOT NULL,
+    caricato_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- =============================================================================
 -- TABELLA: festivita
 -- Le ricorrenze che rendono festivo un giorno del calendario.
 --

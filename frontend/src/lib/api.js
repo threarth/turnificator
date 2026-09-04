@@ -48,12 +48,53 @@ async function request(method, path, body) {
   return data;
 }
 
+/**
+ * Come request(), ma manda un file: niente JSON, e il Content-Type lo
+ * decide il browser perche' deve includere il separatore del multipart.
+ *
+ * @param {string} path
+ * @param {FormData} form
+ * @returns {Promise<object>} il corpo della risposta
+ */
+async function inviaFile(path, form) {
+  const headers = {};
+  const tok = getToken();
+  if (tok) headers['Authorization'] = `Bearer ${tok}`;
+
+  const res = await fetch(path, { method: 'POST', headers, body: form });
+
+  if (res.status === 401) {
+    logout();
+    goto('/login');
+    return { ok: false, errore: 'Sessione scaduta.' };
+  }
+
+  const newToken = res.headers.get('X-New-Token');
+  if (newToken) refreshToken(newToken);
+
+  try {
+    return await res.json();
+  } catch {
+    return { ok: false, errore: `Errore ${res.status}` };
+  }
+}
+
 export const api = {
   get:    (path)        => request('GET',    path),
   post:   (path, body)  => request('POST',   path, body),
   put:    (path, body)  => request('PUT',    path, body),
   delete: (path, body)  => request('DELETE', path, body),
+  file:   (path, form)  => inviaFile(path, form),
 };
+
+/** Impacchetta un file, con eventuali campi accanto, per inviaFile(). */
+function _conFile(file, campi = {}) {
+  const form = new FormData();
+  form.append('file', file);
+  for (const [chiave, valore] of Object.entries(campi)) form.append(chiave, valore);
+
+  return form;
+}
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -128,6 +169,13 @@ export const adminApi = {
   creaRegola:         (dati)       => api.post('/api/admin/regole-conflitto', dati),
   editRegola:         (id, dati)   => api.put(`/api/admin/regole-conflitto/${id}`, dati),
   delRegola:          (id)         => api.delete(`/api/admin/regole-conflitto/${id}`),
+
+  // Modello Excel: la struttura letta da un foglio di calcolo
+  statoModello:    ()     => api.get('/api/admin/modello'),
+  analizzaModello: (file) => api.file('/api/admin/modello/analizza', _conFile(file)),
+  applicaModello:  (file, nomePreset) => api.file(
+    '/api/admin/modello/applica', _conFile(file, { nome_preset: nomePreset })
+  ),
 
   // Festivita' (ricorrenze che rendono festivo un giorno)
   getFestivita:  (anno)      => api.get(`/api/admin/festivita?anno=${anno}`),

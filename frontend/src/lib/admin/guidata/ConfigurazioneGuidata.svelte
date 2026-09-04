@@ -35,6 +35,7 @@
     import VincoliSolver from '../VincoliSolver.svelte';
     import { costruisciStruttura, nomeDuplicato } from '../struttura.js';
     import { NOME_TURNO_TIPO } from '$lib/fasceOrarie.js';
+    import SezioneModello from './SezioneModello.svelte';
     import SezioneFasce from './SezioneFasce.svelte';
     import SezioneTipologie from './SezioneTipologie.svelte';
     import SezioneConteggi from './SezioneConteggi.svelte';
@@ -80,6 +81,7 @@
     // `chiusa` distingue quelle che salvano subito da strutture e turni, che
     // producono qualcosa solo alla conferma finale.
     $: sezioni = [
+        { id: 'modello',    nome: 'Parti da un foglio', chiusa: true },
         { id: 'fasce',      nome: 'Fasce orarie',      chiusa: true },
         { id: 'assenze',    nome: 'Assenze e richieste', chiusa: true },
         { id: 'tipologie',  nome: 'Tipologie turno',   chiusa: true },
@@ -97,6 +99,16 @@
     let passo = 0;
     let errore = '';
     let salvataggio = false;
+
+    // La struttura e' arrivata da un foglio: le sezioni che la costruiscono a
+    // mano non servono piu', e dirlo evita di crearne una seconda per sbaglio.
+    let strutturaDaFoglio = false;
+
+    /** Dopo un import: utenti e tipologie sono cambiati sotto i piedi. */
+    async function ricaricaDopoImport() {
+        await onutentiaggiornati?.();
+        await ontipologieaggiornate?.();
+    }
 
     // Etichetta personalizzata: attiva quando nessun suggerimento va bene.
     let etichettaLibera = false;
@@ -344,6 +356,12 @@
             <div class="alert alert-danger py-2 small">{errore}</div>
         {/if}
 
+        <!-- ═══ Parti da un foglio ═══ -->
+        {#if sezioneCorrente === 'modello'}
+            <SezioneModello onstrutturacreata={() => strutturaDaFoglio = true}
+                            onaggiornati={ricaricaDopoImport} />
+        {/if}
+
         <!-- ═══ Fasce orarie ═══ -->
         {#if sezioneCorrente === 'fasce'}
             <SezioneFasce fasce={fasceDisponibili} {concetti}
@@ -363,6 +381,16 @@
         {/if}
 
         <!-- ═══ Le strutture ═══ -->
+        {#if sezioneCorrente === 'strutture' || sezioneCorrente === 'turni'}
+            {#if strutturaDaFoglio}
+                <div class="alert alert-info py-2 small">
+                    La struttura è già arrivata dal foglio Excel. Quello che
+                    costruisci qui diventerebbe una <strong>seconda</strong>
+                    struttura turni, separata da quella.
+                </div>
+            {/if}
+        {/if}
+
         {#if sezioneCorrente === 'strutture'}
             <p class="guidata-intro">
                 I turni si svolgono in un luogo: un reparto, un ambulatorio, un

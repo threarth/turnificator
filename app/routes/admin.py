@@ -8,6 +8,11 @@ Endpoint:
         PUT    /api/admin/users/<id>               → modifica utente
         DELETE /api/admin/users/<id>               → disabilita utente
 
+    Modello Excel (la struttura letta da un foglio di calcolo):
+        GET    /api/admin/modello              → se c'e' un modello caricato
+        POST   /api/admin/modello/analizza     → cosa contiene, senza scrivere
+        POST   /api/admin/modello/applica      → crea struttura, tipologie, persone
+
     Festivita' (ricorrenze che rendono festivo un giorno):
         GET    /api/admin/festivita?anno=      → ricorrenze con le date dell'anno
         POST   /api/admin/festivita            → aggiunge una ricorrenza
@@ -72,7 +77,9 @@ Endpoint:
         PUT    /api/admin/config                   → aggiorna parametri
 """
 
+import io
 import json
+import secrets
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify, current_app
@@ -93,6 +100,7 @@ from app.services.fasce_orarie import (
     NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
     FormatoOrarioNonValido, parse_orario, ricalcola_tutte
 )
+from app.services.modello_struttura import leggi_struttura
 from app.services.validatori import TIPI_REGOLA
 
 bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -3298,6 +3306,345 @@ def _calcola_festivita(anno):
         ),
         int(anno)
     )
+
+
+# =============================================================================
+# MODELLO EXCEL — la struttura letta da un foglio di calcolo
+# =============================================================================
+
+# Quanto puo' pesare il foglio caricato. I modelli veri stanno sotto il mezzo
+# megabyte; oltre, e' probabile che sia un altro file.
+DIMENSIONE_MAX_MODELLO = 8 * 1024 * 1024
+
+# Caratteri della password provvisoria generata per chi arriva dal foglio.
+CIFRE_PASSWORD_PROVVISORIA = 10
+
+# Lunghezza massima della sigla ricavata da un nome lungo.
+LUNGHEZZA_SIGLA = 8
+
+
+def _sigla_da_nome(nome, lunghezza=LUNGHEZZA_SIGLA):
+    """
+    Una sigla leggibile ricavata da un nome: sole lettere e cifre, maiuscole.
+
+    Args:
+        nome (str): nome di partenza.
+        lunghezza (int): quanti caratteri tenere.
+
+    Returns:
+        str: la sigla, eventualmente vuota se il nome non ha caratteri utili.
+    """
+    return ''.join(c for c in nome.upper() if c.isalnum())[:lunghezza]
+
+
+def _sigla_libera(base, gia_usate):
+    """
+    Una sigla che non collide con quelle gia' prese, numerandola se serve.
+
+    Args:
+        base (str): sigla desiderata.
+        gia_usate (set): sigle occupate; viene aggiornato.
+
+    Returns:
+        str: la sigla assegnata.
+    """
+    base = base or 'X'
+    candidata = base
+    contatore = 2
+    while candidata in gia_usate:
+        coda = str(contatore)
+        candidata = base[:LUNGHEZZA_SIGLA - len(coda)] + coda
+        contatore += 1
+
+    gia_usate.add(candidata)
+
+    return candidata
+
+
+def _modello_dalla_richiesta():
+    """
+    Il foglio allegato alla richiesta, letto e validato.
+
+    Returns:
+        tuple: (nome file, contenuto in byte, None) oppure (None, None, errore).
+    """
+    caricato = request.files.get('file')
+    if caricato is None or not caricato.filename:
+        return None, None, 'Nessun file allegato.'
+
+    contenuto = caricato.read()
+    if not contenuto:
+        return None, None, 'Il file e vuoto.'
+    if len(contenuto) > DIMENSIONE_MAX_MODELLO:
+        return None, None, 'Il file e troppo grande per essere un modello turni.'
+
+    return caricato.filename, contenuto, None
+
+
+@bp.route('/modello/analizza', methods=['POST'])
+@require_role('admin')
+def analizza_modello():
+    """
+    Legge un foglio Excel e racconta che struttura ci ha trovato.
+
+    Non scrive niente: serve a far vedere all'amministratore cosa verrebbe
+    creato, e cosa nel foglio non e' stato capito, prima di decidere.
+    """
+    nome_file, contenuto, errore = _modello_dalla_richiesta()
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    try:
+        letto = leggi_struttura(io.BytesIO(contenuto))
+    except ValueError as e:
+        return jsonify({'ok': False, 'errore': str(e)}), 400
+    except Exception as e:
+        current_app.logger.warning('Lettura del modello fallita: %s', e)
+        return jsonify({'ok': False, 'errore': 'Il file non si legge come foglio Excel.'}), 400
+
+    return jsonify({
+        'ok': True,
+        'nome_file': nome_file,
+        **letto,
+        **_gia_presenti(letto),
+    }), 200
+
+
+def _gia_presenti(letto):
+    """
+    Cosa del foglio il tenant ha gia', per non prometterlo come nuovo.
+
+    Args:
+        letto (dict): esito di leggi_struttura().
+
+    Returns:
+        dict: sigle di persone e nomi di tipologie gia' esistenti.
+    """
+    sigle = {r['sigla'].upper() for r in query_all("SELECT sigla FROM users", ())}
+    tipologie = {r['nome'] for r in query_all("SELECT nome FROM tipi_qualitativo", ())}
+
+    return {
+        'persone_gia_presenti': sorted(
+            p['sigla'] for p in letto['persone'] if p['sigla'].upper() in sigle
+        ),
+        'tipologie_gia_presenti': sorted(
+            t for t in letto['tipologie'] if t in tipologie
+        ),
+    }
+
+
+def _crea_tipologie(nomi):
+    """Crea le tipologie turno che mancano. Restituisce nome → id."""
+    per_nome = {
+        r['nome']: r['id']
+        for r in query_all("SELECT id, nome FROM tipi_qualitativo", ())
+    }
+
+    for nome in nomi:
+        if nome in per_nome:
+            continue
+        cur = execute_write(
+            "INSERT INTO tipi_qualitativo (nome, descrizione) VALUES (?,?)",
+            (nome, 'Dal modello Excel')
+        )
+        per_nome[nome] = cur.lastrowid
+
+    return per_nome
+
+
+def _crea_persone(persone):
+    """
+    Crea le persone che mancano, con una password provvisoria ciascuna.
+
+    Chi c'e' gia', riconosciuto dalla sigla, non viene toccato: il foglio non
+    deve sovrascrivere le persone del programma.
+
+    Args:
+        persone (list): [{sigla, cognome, nome}] dal foglio.
+
+    Returns:
+        list: [{sigla, username, password}] di chi e' stato creato.
+    """
+    esistenti = {
+        r['sigla'].upper() for r in query_all("SELECT sigla FROM users", ())
+    }
+    username_presi = {
+        r['username'].lower() for r in query_all("SELECT username FROM users", ())
+    }
+
+    credenziali = []
+    for p in persone:
+        if p['sigla'].upper() in esistenti:
+            continue
+
+        username = p['sigla'].lower()
+        if username in username_presi:
+            continue
+
+        password = secrets.token_urlsafe(CIFRE_PASSWORD_PROVVISORIA)
+        execute_write(
+            "INSERT INTO users (username, password_hash, role, sigla) "
+            "VALUES (?,?,'basic',?)",
+            (username, hash_password(password), p['sigla'].upper())
+        )
+        esistenti.add(p['sigla'].upper())
+        username_presi.add(username)
+        credenziali.append({
+            'sigla': p['sigla'].upper(), 'username': username, 'password': password,
+        })
+
+    return credenziali
+
+
+def _crea_struttura_turni(nome_preset, letto):
+    """
+    Crea il preset con strutture, gruppi di fascia e turni del foglio.
+
+    I turni conservano l'ordine del foglio: e' quello con cui la griglia del
+    modello dispone le righe, ed e' cio' che permettera' di riesportarci
+    dentro un mese.
+
+    Args:
+        nome_preset (str): nome da dare alla struttura turni.
+        letto (dict): esito di leggi_struttura().
+
+    Returns:
+        tuple: (id del preset, None) oppure (None, messaggio d'errore).
+    """
+    fasce = {
+        r['nome']: r['id']
+        for r in query_all("SELECT id, nome FROM flag_turno", ())
+    }
+    mancanti = sorted({t['fascia'] for t in letto['turni']} - set(fasce))
+    if mancanti:
+        return None, (
+            f"Nel programma mancano le fasce orarie {', '.join(mancanti)}: "
+            f"creale nella configurazione, poi riprova."
+        )
+
+    tipologie = _crea_tipologie(letto['tipologie'])
+
+    me = get_current_user()
+    cur = execute_write(
+        "INSERT INTO struttura_presets (nome, created_by) VALUES (?,?)",
+        (nome_preset, me['id'])
+    )
+    preset_id = cur.lastrowid
+
+    sigle_sg = set()
+    for ordine_sg, struttura in enumerate(letto['strutture']):
+        cur = execute_write(
+            "INSERT INTO sovragruppi (preset_id, sigla, nome, ordine) VALUES (?,?,?,?)",
+            (preset_id, _sigla_libera(_sigla_da_nome(struttura['nome']), sigle_sg),
+             struttura['nome'], ordine_sg * 10)
+        )
+        _crea_turni_della_struttura(
+            cur.lastrowid, struttura['chiave'], letto['turni'], fasce, tipologie
+        )
+
+    return preset_id, None
+
+
+def _crea_turni_della_struttura(sg_id, chiave, turni, fasce, tipologie):
+    """
+    Crea i gruppi di fascia di una struttura, e sotto ciascuno i suoi turni.
+
+    Il gruppo non e' un livello che l'utente sceglie: nasce dal fatto che due
+    turni cadono nella stessa fascia, come nella configurazione guidata.
+    """
+    suoi = [t for t in turni if t['struttura'] == chiave]
+    sigle_turni = set()
+
+    for ordine_g, fascia in enumerate(dict.fromkeys(t['fascia'] for t in suoi)):
+        cur = execute_write(
+            "INSERT INTO gruppi (sovragruppo_id, sigla, nome, flag_id, ordine) "
+            "VALUES (?,?,?,?,?)",
+            (sg_id, _sigla_da_nome(fascia, 3), fascia.capitalize(),
+             fasce[fascia], ordine_g * 10)
+        )
+        gruppo_id = cur.lastrowid
+
+        for ordine_t, turno in enumerate(t for t in suoi if t['fascia'] == fascia):
+            cur = execute_write(
+                "INSERT INTO preset_turni (gruppo_id, sigla, nome, ordine) "
+                "VALUES (?,?,?,?)",
+                (gruppo_id, _sigla_libera(_sigla_da_nome(turno['nome']), sigle_turni),
+                 turno['nome'], ordine_t * 10)
+            )
+            if turno['tipologia'] in tipologie:
+                execute_write(
+                    "INSERT OR IGNORE INTO preset_turni_qualitativo "
+                    "(preset_turno_id, tipo_qualitativo_id) VALUES (?,?)",
+                    (cur.lastrowid, tipologie[turno['tipologia']])
+                )
+
+
+@bp.route('/modello/applica', methods=['POST'])
+@require_role('admin')
+def applica_modello():
+    """
+    Crea struttura turni, tipologie e persone da un foglio Excel, e lo tiene.
+
+    Il foglio resta nel tenant: e' il modello in cui i mesi programmati
+    verranno riesportati, e la struttura appena creata gli combacia riga per
+    riga.
+
+    Form multipart:
+        file (file): il foglio.
+        nome_preset (str): come chiamare la struttura turni.
+    """
+    nome_file, contenuto, errore = _modello_dalla_richiesta()
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    nome_preset = (request.form.get('nome_preset') or '').strip()
+    if not nome_preset:
+        return jsonify({'ok': False, 'errore': 'Dai un nome alla struttura turni.'}), 400
+    if query_one("SELECT id FROM struttura_presets WHERE nome=?", (nome_preset,)):
+        return jsonify({
+            'ok': False, 'errore': f'Struttura turni "{nome_preset}" gia esistente.'
+        }), 409
+
+    try:
+        letto = leggi_struttura(io.BytesIO(contenuto))
+    except ValueError as e:
+        return jsonify({'ok': False, 'errore': str(e)}), 400
+
+    preset_id, errore = _crea_struttura_turni(nome_preset, letto)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 409
+
+    credenziali = _crea_persone(letto['persone'])
+
+    execute_write(
+        "INSERT INTO modello_turni (id, nome_file, contenuto, caricato_at) "
+        "VALUES (1,?,?,datetime('now')) "
+        "ON CONFLICT(id) DO UPDATE SET nome_file=excluded.nome_file, "
+        "contenuto=excluded.contenuto, caricato_at=excluded.caricato_at",
+        (nome_file, contenuto)
+    )
+
+    return jsonify({
+        'ok': True,
+        'preset_id': preset_id,
+        'strutture': len(letto['strutture']),
+        'turni': len(letto['turni']),
+        'tipologie': len(letto['tipologie']),
+        'persone_create': credenziali,
+        'avvisi': letto['avvisi'],
+    }), 201
+
+
+@bp.route('/modello', methods=['GET'])
+@require_role('admin')
+def stato_modello():
+    """Se questo tenant ha un modello caricato, e quale."""
+    riga = query_one(
+        "SELECT nome_file, caricato_at, LENGTH(contenuto) AS byte "
+        "FROM modello_turni WHERE id=1", ()
+    )
+
+    return jsonify({'ok': True, 'modello': riga}), 200
 
 
 # =============================================================================
