@@ -17,6 +17,8 @@ Le tabelle sono Tabelle Excel vere (ListObject): si allungano da sole, e le
 tendine che le citano restano agganciate quando si aggiunge una riga.
 """
 
+import calendar
+import datetime
 import re
 import unicodedata
 
@@ -789,12 +791,17 @@ def main():
     scrivi_riferimenti(wb, bersagli, richieste)
     scrivi_parametri(wb, mese, anno)
 
+    festivita = calcola_festivita(anno)
+    _, celle_aperte = scrivi_calendario(wb, turni, mese, anno, festivita)
+    scrivi_desiderata(wb, persone, mese, anno, festivita)
+
     for nome, colonna in (('elenco_bersagli', 'T_Bersagli[bersaglio]'),
                           ('elenco_persone', 'T_Persone[acronimo]'),
                           ('elenco_sedi', 'T_Sedi[codice]'),
                           ('elenco_presidi', 'T_Presidi[codice]'),
                           ('elenco_metodiche', 'T_Metodiche[metodica]'),
-                          ('elenco_fasce', 'T_Fasce[fascia]')):
+                          ('elenco_fasce', 'T_Fasce[fascia]'),
+                          ('elenco_richieste', 'T_Richieste[sigla]')):
         registra_nome(wb, nome, colonna)
 
     postazioni = len({turno['postazione'] for turno in turni})
@@ -806,7 +813,245 @@ def main():
     print(f'  turni {len(turni)} · postazioni {postazioni} · '
           f'persone {len(persone)} · bersagli {len(bersagli)}')
     print(f'  doppioni nei bersagli: {doppioni or "nessuno"}')
+    print(f'  griglia: {celle_aperte} celle da coprire in {mese:02d}/{anno}')
 
+
+
+# Le festivita' fisse, come le calcola il foglio `festivi` dell'originale:
+# (giorno, mese, nome). San Pietro e Paolo e' il patrono di Roma.
+FESTIVITA_FISSE = (
+    (1,  1,  'Capodanno'),      (6,  1,  'Epifania'),
+    (25, 4,  'Liberazione'),    (1,  5,  'Festa del lavoro'),
+    (2,  6,  'Repubblica'),     (29, 6,  'San Pietro e Paolo'),
+    (15, 8,  'Ferragosto'),     (1,  11, 'Ognissanti'),
+    (8,  12, 'Immacolata'),     (25, 12, 'Natale'),
+    (26, 12, 'Santo Stefano'),
+)
+
+# Le festivita' che si contano dalla Pasqua: (offset in giorni, nome).
+FESTIVITA_MOBILI = ((0, 'Pasqua'), (1, 'Pasquetta'))
+
+# Le iniziali dei giorni, nell'ordine di date.weekday(): lunedi' = 0.
+INIZIALI_GIORNI = 'LMMGVSD'
+DOMENICA = 6
+
+# Come si colorano le celle chiuse e le intestazioni della griglia.
+GRIGIO_CHIUSO = 'FFD9D9D9'
+GIALLO_FESTIVO = 'FFFFF2CC'
+GRIGIO_INTESTAZIONE = 'FFF2F2F2'
+
+MESI = ('gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+        'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre')
+
+LARGHEZZA_GIORNO = 6
+LARGHEZZA_ETICHETTA = 30
+
+
+def calcola_pasqua(anno):
+    """
+    La domenica di Pasqua, con l'algoritmo gregoriano anonimo.
+
+    E' la forma canonica (Meeus/Jones/Butcher): le lettere sono quelle
+    della pubblicazione originale e non hanno un significato che convenga
+    ribattezzare. Verificata su 2024-03-31, 2025-04-20, 2026-04-05.
+
+    Args:
+        anno (int): l'anno.
+
+    Returns:
+        datetime.date: la data di Pasqua.
+    """
+    a = anno % 19
+    b, c = divmod(anno, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+
+    mese, giorno = divmod(h + l - 7 * m + 114, 31)
+
+    return datetime.date(anno, mese, giorno + 1)
+
+
+def calcola_festivita(anno):
+    """
+    Le date festive di un anno: le fisse piu' quelle legate alla Pasqua.
+
+    Le domeniche non stanno qui — quelle le sa il calendario.
+
+    Args:
+        anno (int): l'anno.
+
+    Returns:
+        dict: data -> nome della festivita'.
+    """
+    festivita = {datetime.date(anno, mese, giorno): nome
+                 for giorno, mese, nome in FESTIVITA_FISSE}
+
+    pasqua = calcola_pasqua(anno)
+    for scarto, nome in FESTIVITA_MOBILI:
+        festivita[pasqua + datetime.timedelta(days=scarto)] = nome
+
+    return festivita
+
+
+def _giorni_del_mese(mese, anno):
+    """Le date del mese, in ordine."""
+    ultimo = calendar.monthrange(anno, mese)[1]
+
+    return [datetime.date(anno, mese, giorno)
+            for giorno in range(1, ultimo + 1)]
+
+
+def turno_aperto(turno, data, festivita):
+    """
+    Se un turno va coperto in un dato giorno.
+
+    Tre condizioni in and: il turno e' attivo, la maschera dei giorni
+    ammette quel giorno della settimana, e — se e' domenica o festivita' —
+    il turno dichiara di aprire anche in quei giorni.
+
+    Args:
+        turno (dict): la riga del turno.
+        data (datetime.date): il giorno.
+        festivita (dict): le date festive dell'anno.
+
+    Returns:
+        bool: True se la cella va riempita.
+    """
+    if turno['attivo'] != 'SI' or turno['riempimento'] == 'chiuso':
+        return False
+
+    if turno['giorni'][data.weekday()] == '-':
+        return False
+
+    if data.weekday() == DOMENICA and turno['festivi'] != 'SI':
+        return False
+
+    if data in festivita and turno['superfestivi'] != 'SI':
+        return False
+
+    return True
+
+
+def _intesta_calendario(ws, giorni, festivita, prima_colonna):
+    """Scrive le tre righe di testata: numero, iniziale, festivita'."""
+    grassetto = openpyxl.styles.Font(bold=True)
+    centrato = openpyxl.styles.Alignment(horizontal='center')
+
+    for scarto, data in enumerate(giorni):
+        colonna = prima_colonna + scarto
+        festivo = data.weekday() == DOMENICA or data in festivita
+
+        for riga, valore in ((1, data.day),
+                             (2, INIZIALI_GIORNI[data.weekday()]),
+                             (3, festivita.get(data, ''))):
+            cella = ws.cell(riga, colonna, valore)
+            cella.font = grassetto
+            cella.alignment = centrato
+            if festivo:
+                cella.fill = openpyxl.styles.PatternFill(
+                    'solid', fgColor=GIALLO_FESTIVO)
+
+        ws.column_dimensions[get_column_letter(colonna)].width = \
+            LARGHEZZA_GIORNO
+
+
+def scrivi_calendario(wb, turni, mese, anno, festivita):
+    """
+    La griglia dei turni: una riga per turno aperto, una colonna per giorno.
+
+    E' qui che sparisce la geometria fissa dell'originale. Le righe non sono
+    piu' cablate — "mattina dalla 22 alla 39" — ma generate da T_Turni
+    nell'ordine della colonna `ordine`, saltando i turni spenti. Aggiungere
+    un turno significa aggiungere una riga alla tabella, non rifare tre
+    fogli.
+
+    Le celle grigie sono chiuse: quel turno, quel giorno, non si copre. Il
+    solver scrive solo nelle celle bianche.
+
+    Args:
+        wb: cartella di lavoro di destinazione.
+        turni (list): i turni completati.
+        mese (int), anno (int): il mese da programmare.
+        festivita (dict): le date festive dell'anno.
+
+    Returns:
+        Il foglio creato.
+    """
+    ws = wb.create_sheet('Calendario')
+    giorni = _giorni_del_mese(mese, anno)
+    prima_colonna = 3
+
+    _intesta_calendario(ws, giorni, festivita, prima_colonna)
+    ws.cell(1, 1, 'id').font = openpyxl.styles.Font(bold=True)
+    ws.cell(1, 2, f'{MESI[mese - 1].upper()} {anno}').font = \
+        openpyxl.styles.Font(bold=True)
+    ws.column_dimensions['A'].width = 6
+    ws.column_dimensions['B'].width = LARGHEZZA_ETICHETTA
+
+    grigio = openpyxl.styles.PatternFill('solid', fgColor=GRIGIO_CHIUSO)
+    aperte = 0
+
+    for scarto, turno in enumerate(t for t in turni if t['attivo'] == 'SI'):
+        riga = 4 + scarto
+        ws.cell(riga, 1, turno['id'])
+        ws.cell(riga, 2, turno['etichetta'])
+
+        for indice, data in enumerate(giorni):
+            cella = ws.cell(riga, prima_colonna + indice)
+            if turno_aperto(turno, data, festivita):
+                aperte += 1
+            else:
+                cella.fill = grigio
+
+    ws.freeze_panes = ws.cell(4, prima_colonna)
+    ultima = 3 + len({t['id'] for t in turni if t['attivo'] == 'SI'})
+    aggiungi_tendina(ws, [get_column_letter(prima_colonna + i)
+                          for i in range(len(giorni))],
+                     '=elenco_persone', 4, ultima)
+
+    return ws, aperte
+
+
+def scrivi_desiderata(wb, persone, mese, anno, festivita):
+    """
+    Le richieste dei lavoratori: una riga per persona, una per giorno.
+
+    E' l'ingresso del solver, insieme alle preferenze: qui sta cosa la
+    persona ha chiesto per quel giorno preciso, mentre T_Preferenze tiene
+    cio' che vale sempre.
+
+    Args:
+        wb: cartella di lavoro di destinazione.
+        persone (list): le persone.
+        mese (int), anno (int): il mese da programmare.
+        festivita (dict): le date festive dell'anno.
+
+    Returns:
+        Il foglio creato.
+    """
+    ws = wb.create_sheet('Desiderata')
+    giorni = _giorni_del_mese(mese, anno)
+    prima_colonna = 2
+
+    _intesta_calendario(ws, giorni, festivita, prima_colonna)
+    ws.cell(1, 1, 'MEDICO').font = openpyxl.styles.Font(bold=True)
+    ws.column_dimensions['A'].width = 10
+
+    for scarto, persona in enumerate(persone):
+        ws.cell(4 + scarto, 1, persona['acronimo'])
+
+    ultima = 3 + len(persone)
+    ws.freeze_panes = ws.cell(4, prima_colonna)
+    aggiungi_tendina(ws, [get_column_letter(prima_colonna + i)
+                          for i in range(len(giorni))],
+                     '=elenco_richieste', 4, ultima)
+
+    return ws
 
 if __name__ == '__main__':
     main()
