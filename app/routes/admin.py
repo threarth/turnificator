@@ -13,6 +13,10 @@ Endpoint:
         POST   /api/admin/modello/analizza     → cosa contiene, senza scrivere
         POST   /api/admin/modello/applica      → crea struttura, tipologie, persone
 
+    Desiderata da un foglio (le richieste di un mese):
+        POST   /api/admin/desiderata/analizza  → cosa comporterebbe importarlo
+        POST   /api/admin/desiderata/importa   → sostituisce il mese
+
     Festivita' (ricorrenze che rendono festivo un giorno):
         GET    /api/admin/festivita?anno=      → ricorrenze con le date dell'anno
         POST   /api/admin/festivita            → aggiunge una ricorrenza
@@ -85,7 +89,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app
 
 from app.auth import require_role, get_current_user, hash_password
-from app.db import query_one, query_all, execute_write, get_db
+from app.db import query_one, query_all, execute_write, execute_many, get_db
 from app.services.calendario_state import ottieni_calendario_aperto
 from app.services.calendario_giorni import (
     TIPO_FESTIVO, TIPO_SUPERFESTIVO,
@@ -100,6 +104,7 @@ from app.services.fasce_orarie import (
     NOME_TURNO_TIPO, PAUSA_DEFAULT_MINUTI,
     FormatoOrarioNonValido, parse_orario, ricalcola_tutte
 )
+from app.services.modello_desiderata import leggi_desiderata
 from app.services.modello_struttura import leggi_struttura, rinomina_strutture
 from app.services.validatori import TIPI_REGOLA
 
@@ -3719,6 +3724,244 @@ def stato_modello():
     )
 
     return jsonify({'ok': True, 'modello': riga}), 200
+
+
+# =============================================================================
+# DESIDERATA DA UN FOGLIO — le richieste di un mese, importate
+# =============================================================================
+
+def _confronto_persone(sigle_foglio):
+    """
+    Chi c'e' nel foglio e chi nel programma.
+
+    Prima di sostituire un mese intero bisogna essere certi di parlare delle
+    stesse persone: una sigla che non si riconosce e' una colonna di
+    richieste che andrebbe persa in silenzio.
+
+    Args:
+        sigle_foglio (iterable): sigle lette dal foglio.
+
+    Returns:
+        tuple: (dict sigla → user_id, sconosciute, mancanti dal foglio).
+    """
+    nel_programma = {
+        r['sigla'].upper(): r['id']
+        for r in query_all(
+            "SELECT id, sigla FROM users WHERE is_active=1 AND escluso_turni=0", ()
+        )
+    }
+    del_foglio = {s.upper() for s in sigle_foglio}
+
+    return (
+        {s: nel_programma[s] for s in del_foglio if s in nel_programma},
+        sorted(del_foglio - set(nel_programma)),
+        sorted(set(nel_programma) - del_foglio),
+    )
+
+
+def _confronto_codici(codici_foglio):
+    """
+    Le sigle di richiesta del foglio, tradotte in tipi del programma.
+
+    Returns:
+        tuple: (dict codice maiuscolo → tipo_richiesta_id, sconosciuti).
+    """
+    nel_programma = {
+        r['sigla'].upper(): r['id']
+        for r in query_all("SELECT id, sigla FROM tipi_richiesta", ())
+    }
+    del_foglio = {c.upper() for c in codici_foglio}
+
+    return (
+        {c: nel_programma[c] for c in del_foglio if c in nel_programma},
+        sorted(del_foglio - set(nel_programma)),
+    )
+
+
+def _esamina_foglio_desiderata(contenuto):
+    """
+    Legge il foglio e lo confronta con il programma, senza scrivere niente.
+
+    Returns:
+        tuple: (dict con l'esame, None) oppure (None, messaggio d'errore).
+    """
+    try:
+        letto = leggi_desiderata(io.BytesIO(contenuto))
+    except ValueError as e:
+        return None, str(e)
+    except Exception as e:
+        current_app.logger.warning('Lettura dei desiderata fallita: %s', e)
+        return None, 'Il file non si legge come foglio Excel.'
+
+    persone, sconosciute, mancanti = _confronto_persone(letto['persone'])
+    codici, codici_ignoti = _confronto_codici(letto['codici'])
+
+    calendario = query_one(
+        "SELECT id, stato, desiderata_congelati FROM calendari "
+        "WHERE mese=? AND anno=? AND tipo='programmato'",
+        (letto['mese'], letto['anno'])
+    )
+
+    scrivibili = [
+        r for r in letto['richieste']
+        if r['sigla'].upper() in persone and r['codice'].upper() in codici
+    ]
+
+    gia_presenti = 0
+    if calendario:
+        gia_presenti = query_one(
+            "SELECT COUNT(*) AS n FROM desiderata WHERE calendario_id=?",
+            (calendario['id'],)
+        )['n']
+
+    return {
+        'mese': letto['mese'],
+        'anno': letto['anno'],
+        'foglio': letto['foglio'],
+        'calendario': dict(calendario) if calendario else None,
+        'richieste_nel_foglio': len(letto['richieste']),
+        'richieste_importabili': len(scrivibili),
+        'desiderata_da_sostituire': gia_presenti,
+        'persone_nel_foglio': len(letto['persone']),
+        'persone_sconosciute': sconosciute,
+        'persone_senza_riga': mancanti,
+        'codici_sconosciuti': codici_ignoti,
+        'avvisi': letto['avvisi'],
+        '_letto': letto,
+        '_persone': persone,
+        '_codici': codici,
+        '_scrivibili': scrivibili,
+    }, None
+
+
+def _discrepanze(esame):
+    """Le differenze che meritano una conferma esplicita prima di scrivere."""
+    return (esame['persone_sconosciute'] or esame['persone_senza_riga']
+            or esame['codici_sconosciuti'])
+
+
+@bp.route('/desiderata/analizza', methods=['POST'])
+@require_role('admin')
+def analizza_desiderata():
+    """
+    Legge un foglio di desiderata e dice cosa comporterebbe importarlo.
+
+    Non scrive niente. L'import sostituisce il mese intero, quindi prima si
+    guarda: di che mese parla il foglio, se il calendario c'e', quante
+    richieste porta, quante ne cancellerebbe, e soprattutto se le persone
+    sono le stesse.
+    """
+    _, contenuto, errore = _modello_dalla_richiesta()
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    esame, errore = _esamina_foglio_desiderata(contenuto)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    pubblico = {k: v for k, v in esame.items() if not k.startswith('_')}
+
+    return jsonify({'ok': True, 'discrepanze': bool(_discrepanze(esame)), **pubblico}), 200
+
+
+@bp.route('/desiderata/importa', methods=['POST'])
+@require_role('admin')
+def importa_desiderata():
+    """
+    Sostituisce i desiderata di un mese con quelli del foglio.
+
+    Il foglio e' la verita': le richieste del mese vengono cancellate e
+    riscritte. Con discrepanze fra le persone del foglio e quelle del
+    programma serve una conferma esplicita, perche' quello che non si
+    riconosce resta fuori.
+
+    Form multipart:
+        file (file): il foglio.
+        conferma (str): 'true' per procedere nonostante le discrepanze.
+    """
+    _, contenuto, errore = _modello_dalla_richiesta()
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    esame, errore = _esamina_foglio_desiderata(contenuto)
+    if errore:
+        return jsonify({'ok': False, 'errore': errore}), 400
+
+    if not esame['calendario']:
+        return jsonify({
+            'ok': False,
+            'errore': f"Non c'e' un calendario per {esame['mese']}/{esame['anno']}: "
+                      f"crealo prima di importare le richieste."
+        }), 409
+
+    conferma = (request.form.get('conferma') or '').lower() == 'true'
+    if _discrepanze(esame) and not conferma:
+        return jsonify({
+            'ok': False,
+            'codice': 'discrepanze',
+            'errore': 'Il foglio e il programma non parlano delle stesse '
+                      'persone: guarda le differenze e conferma.',
+        }), 409
+
+    cal_id = esame['calendario']['id']
+    scritte = _scrivi_desiderata(cal_id, esame)
+
+    return jsonify({
+        'ok': True,
+        'calendario_id': cal_id,
+        'mese': esame['mese'],
+        'anno': esame['anno'],
+        'importate': scritte,
+        'sostituite': esame['desiderata_da_sostituire'],
+        'saltate': esame['richieste_nel_foglio'] - scritte,
+        'copia_di_lavoro_rifatta': bool(esame['calendario']['desiderata_congelati']),
+    }), 200
+
+
+def _scrivi_desiderata(cal_id, esame):
+    """
+    Cancella le richieste del mese e riscrive quelle del foglio.
+
+    Se i desiderata erano congelati, la copia di lavoro viene rifatta dagli
+    originali appena importati: lasciarla com'era significherebbe pianificare
+    su richieste che nessuno ha piu'.
+
+    Args:
+        cal_id (int): calendario del mese.
+        esame (dict): esito di _esamina_foglio_desiderata().
+
+    Returns:
+        int: quante richieste sono state scritte.
+    """
+    me = get_current_user()
+
+    execute_write("DELETE FROM desiderata WHERE calendario_id=?", (cal_id,))
+
+    righe = [
+        (cal_id, esame['_persone'][r['sigla'].upper()], r['giorno'],
+         esame['_codici'][r['codice'].upper()], me['id'])
+        for r in esame['_scrivibili']
+    ]
+    if righe:
+        execute_many(
+            "INSERT OR REPLACE INTO desiderata "
+            "(calendario_id, user_id, giorno, tipo_richiesta_id, updated_at, updated_by) "
+            "VALUES (?,?,?,?,datetime('now'),?)",
+            righe
+        )
+
+    if esame['calendario']['desiderata_congelati']:
+        execute_write("DELETE FROM working_desiderata WHERE calendario_id=?", (cal_id,))
+        execute_write(
+            "INSERT INTO working_desiderata "
+            "(calendario_id, user_id, giorno, tipo_richiesta_id, note, "
+            " updated_at, updated_by) "
+            "SELECT calendario_id, user_id, giorno, tipo_richiesta_id, note, "
+            "       datetime('now'), ? FROM desiderata WHERE calendario_id = ?",
+            (me['id'], cal_id)
+        )
+
+    return len(righe)
 
 
 # =============================================================================

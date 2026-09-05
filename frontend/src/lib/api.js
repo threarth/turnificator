@@ -178,6 +178,12 @@ export const adminApi = {
     _conFile(file, { strutture: JSON.stringify(strutture ?? {}) })
   ),
 
+  // Desiderata presi da un foglio Excel
+  analizzaDesiderata: (file) => api.file('/api/admin/desiderata/analizza', _conFile(file)),
+  importaDesiderata:  (file, conferma) => api.file(
+    '/api/admin/desiderata/importa', _conFile(file, { conferma: conferma ? 'true' : 'false' })
+  ),
+
   // Festivita' (ricorrenze che rendono festivo un giorno)
   getFestivita:  (anno)      => api.get(`/api/admin/festivita?anno=${anno}`),
   creaFestivita: (dati)      => api.post('/api/admin/festivita', dati),

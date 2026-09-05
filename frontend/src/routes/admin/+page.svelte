@@ -9,6 +9,7 @@
     editRowKeydown, startEditFromRow as _startEditFromRow
   } from '$lib/admin/actions.js';
   import DeleteButton from '$lib/admin/DeleteButton.svelte';
+  import ImportDesiderata from '$lib/admin/ImportDesiderata.svelte';
   import FlagRow from '$lib/admin/FlagRow.svelte';
   import FlagForm from '$lib/admin/FlagForm.svelte';
   import ConfigurazioneGuidata from '$lib/admin/guidata/ConfigurazioneGuidata.svelte';
@@ -1687,6 +1688,10 @@
     {#if msgCal}<div class="alert py-2 small {msgCal.startsWith('✓')?'alert-success':'alert-danger'}">{msgCal}</div>{/if}
 
     {#if $userStore?.role !== 'manager' || $userStore?.puo_gestire_calendari}
+    <ImportDesiderata onimportati={async () => {
+      calendari = (await adminApi.getCalendari()).calendari ?? [];
+    }} />
+
     <div class="card mb-3">
       <div class="card-header fw-semibold">Crea nuovo calendario</div>
       <div class="card-body">
