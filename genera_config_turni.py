@@ -36,7 +36,7 @@ MODELLO_ORIGINE = 'modello_turni_set26.xlsx'
 FILE_USCITA = 'modello_config.xlsx'
 FOGLIO_TABELLE = 'Tabelle'
 
-# Il foglio nascosto che diagnostica la griglia.
+# Il foglio che diagnostica la griglia.
 FOGLIO_CONTROLLI = 'Controlli'
 
 # Le sedi: il presidio fisico incrociato con la tipologia di turno.
@@ -151,6 +151,13 @@ REGOLE_PER_PERSONA = 10
 
 # Righe libere lasciate pronte nella tabella dei tetti mensili.
 RIGHE_TETTI_LIBERE = 20
+
+# Righe libere lasciate pronte nella tabella dei turni fissi.
+RIGHE_POSTI_LIBERE = 30
+
+# I giorni della settimana per esteso, per la tendina dei turni fissi.
+GIORNI_SETTIMANA = ('lunedi', 'martedi', 'mercoledi', 'giovedi',
+                    'venerdi', 'sabato', 'domenica')
 
 # Fin dove arriva un elenco che alimenta una tendina. Serve un limite:
 # un riferimento a colonna intera rallenta il foglio in modo grave.
@@ -722,6 +729,42 @@ def scrivi_tetti(wb):
     return ws
 
 
+def scrivi_posti_fissi(wb, ultima_riga_bersagli):
+    """
+    I turni che tornano ogni settimana sempre alla stessa persona.
+
+    «Tizio il giovedi' pomeriggio in TC» e' una regola di rotazione, non
+    un desiderata: vale tutti i giovedi' del mese e non va ridigitata ogni
+    volta. Il solver la applica per prima, prima di ogni altra scelta.
+
+    `salta_se_assente` dice cosa fare quando la persona quel giorno ha
+    chiesto un'assenza: normalmente il posto resta vuoto e se lo giocano
+    gli altri, ma si puo' chiedere di assegnarlo lo stesso e farsi
+    segnalare il conflitto.
+
+    Args:
+        wb: cartella di lavoro di destinazione.
+        ultima_riga_bersagli (int): quante voci ha T_Bersagli, per la
+            tendina dei turni.
+
+    Returns:
+        Il foglio creato.
+    """
+    righe = [['', '', '', 'SI', 'SI', ''] for _ in range(RIGHE_POSTI_LIBERE)]
+    ws = scrivi_tabella(
+        wb, 'PostiFissi', 'T_PostiFissi',
+        ['persona', 'turno', 'giorno', 'salta_se_assente', 'attivo', 'note'],
+        righe)
+
+    ultima = len(righe) + 1
+    aggiungi_tendina(ws, ['A'], 'elenco_persone', 2, ultima)
+    aggiungi_tendina(ws, ['B'], 'elenco_turni', 2, ultima)
+    aggiungi_tendina(ws, ['C'], f'"{",".join(GIORNI_SETTIMANA)}"', 2, ultima)
+    aggiungi_tendina(ws, ['D', 'E'], f'"{SI_NO}"', 2, ultima)
+
+    return ws
+
+
 def scrivi_riferimenti(wb, bersagli, richieste):
     """Bersagli, tipi di richiesta e regole assolute."""
     scrivi_tabella(wb, 'Bersagli', 'T_Bersagli',
@@ -819,6 +862,7 @@ def main():
     scrivi_turni(wb, turni)
     scrivi_persone(wb, persone)
     scrivi_preferenze(wb, persone)
+    scrivi_posti_fissi(wb, len(bersagli) + 1)
     scrivi_tetti(wb)
     scrivi_riferimenti(wb, bersagli, richieste)
     scrivi_parametri(wb, mese, anno)
@@ -829,6 +873,12 @@ def main():
     scrivi_desiderata(wb, persone, mese, anno, festivita)
     scrivi_controlli(wb, righe_turno, ultima_riga, ultimo_giorno,
                      len(persone), len(richieste))
+
+    # I turni sono in fondo a T_Bersagli: la tendina dei turni fissi
+    # pesca solo quelli, senza doversi leggere fasce e metodiche.
+    primo_turno = 2 + sum(1 for riga in bersagli if riga[1] != 'turno')
+    registra_nome(wb, 'elenco_turni',
+                  f'Bersagli!$A${primo_turno}:$A${len(bersagli) + 1}')
 
     for nome, foglio in (('elenco_bersagli', 'Bersagli'),
                          ('elenco_persone', 'Persone'),
@@ -871,7 +921,7 @@ INIZIALI_GIORNI = 'LMMGVSD'
 DOMENICA = 6
 
 # Come si colorano le celle chiuse e le intestazioni della griglia.
-GRIGIO_CHIUSO = 'FFD9D9D9'
+GRIGIO_CHIUSO = 'FFE5E3E3'
 GIALLO_FESTIVO = 'FFFFF2CC'
 GRIGIO_INTESTAZIONE = 'FFF2F2F2'
 
@@ -883,15 +933,23 @@ MESI = ('gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
 FASCIA_RICHIESTA = {'M': 'mattina', 'P': 'pomeriggio',
                     'N': 'notte', 'L': 'lunga'}
 
-# I colori delle segnalazioni. I gravi rompono una regola assoluta, gli
-# avvisi disattendono una richiesta: due gravita', due letture a colpo
-# d'occhio.
-COLORE_GRAVE_SFONDO = 'FFFFC7CE'
-COLORE_GRAVE_TESTO = 'FF9C0006'
-COLORE_ASSENZA_SFONDO = 'FFFFEB9C'
-COLORE_ASSENZA_TESTO = 'FF9C6500'
-COLORE_FASCIA_SFONDO = 'FFE4DFEC'
+# I colori delle segnalazioni, presi uno a uno dalle formattazioni
+# condizionali del modello originale: chi legge la griglia riconosce gia'
+# questi colori, e cambiarli vorrebbe dire fargli reimparare tutto.
+# Le tinte di tema sono gia' risolte: A9CE91 e' accent6 al 40 per cento,
+# E2EFDA lo stesso all 80.
+COLORE_DOPPIO_SFONDO = 'FFD6BBEB'
+COLORE_DOPPIO_TESTO = 'FFFF0000'
+COLORE_NOTTE_SFONDO = 'FFFFFF00'
+COLORE_NOTTE_TESTO = 'FFFF0000'
+COLORE_SMONTO_SFONDO = 'FFCCFF33'
+COLORE_SMONTO_TESTO = 'FFFF0000'
+COLORE_ASSENZA_SFONDO = 'FFFFFF00'
+COLORE_ASSENZA_TESTO = 'FF002060'
+COLORE_FASCIA_SFONDO = 'FFA9CE91'
 COLORE_FASCIA_TESTO = 'FF7030A0'
+COLORE_LUNGA_SFONDO = 'FFE2EFDA'
+COLORE_LUNGA_TESTO = 'FF000000'
 
 # Le colonne di servizio del Calendario: portano la fascia e l'id di ogni
 # riga, cosi' le regole sanno che turno stanno guardando senza bisogno di
@@ -1221,7 +1279,7 @@ def _applica_segnalazioni(ws, ultima_riga, ultimo_giorno):
 def scrivi_controlli(wb, righe_turno, ultima_riga, ultimo_giorno,
                      numero_persone, numero_richieste):
     """
-    Il foglio nascosto che diagnostica ogni cella della griglia.
+    Il foglio che diagnostica ogni cella della griglia.
 
     Ha la stessa geometria del Calendario perche' lo scrive lo stesso
     generatore dalla stessa tabella: non c'e' modo che i due divergano,
@@ -1257,8 +1315,6 @@ def scrivi_controlli(wb, righe_turno, ultima_riga, ultimo_giorno,
         for colonna in range(PRIMA_COLONNA_GIORNI, ultima_colonna + 1):
             destinazione = f'{get_column_letter(colonna)}{riga}'
             ws[destinazione] = traduttore.translate_formula(destinazione)
-
-    ws.sheet_state = 'hidden'
 
     return ws
 
@@ -1343,14 +1399,16 @@ def _scrivi_righe_turno(ws, turni, prima_riga, giorni, festivita,
 # Sono stringhe e non numeri perche' si leggono anche a occhio, aprendo
 # il foglio nascosto quando una segnalazione non torna.
 CODICI_SEGNALAZIONE = (
-    ('doppio', COLORE_GRAVE_SFONDO, COLORE_GRAVE_TESTO,
+    ('doppio', COLORE_DOPPIO_SFONDO, COLORE_DOPPIO_TESTO,
      'La stessa persona due volte nello stesso giorno'),
-    ('notteAltro', COLORE_GRAVE_SFONDO, COLORE_GRAVE_TESTO,
+    ('notteAltro', COLORE_NOTTE_SFONDO, COLORE_NOTTE_TESTO,
      'Notte e altro turno lo stesso giorno'),
-    ('smonto', COLORE_GRAVE_SFONDO, COLORE_GRAVE_TESTO,
+    ('smonto', COLORE_SMONTO_SFONDO, COLORE_SMONTO_TESTO,
      'Smonto notte: assegnato il giorno dopo una notte'),
     ('assenza', COLORE_ASSENZA_SFONDO, COLORE_ASSENZA_TESTO,
      'Assegnato in un giorno per cui aveva chiesto un assenza'),
+    ('lunga', COLORE_LUNGA_SFONDO, COLORE_LUNGA_TESTO,
+     'Aveva chiesto la lunga e si ritrova in notte'),
     ('fascia', COLORE_FASCIA_SFONDO, COLORE_FASCIA_TESTO,
      'Fascia diversa da quella richiesta'),
 )
@@ -1428,8 +1486,9 @@ def _formula_controllo(riga, ultima_riga, ultima_persona, ultimo_giorno,
         f'IF(AND(COLUMN()>{PRIMA_COLONNA_GIORNI},'
         f'COUNTIFS({fasce},"notte",{ieri},{cella})>0),"smonto",'
         f'IF({tipo}="assenza","assenza",'
+        f'IF(AND({fascia_chiesta}="lunga",{fascia_riga}="notte"),"lunga",'
         f'IF(AND({fascia_riga}<>"",{fascia_chiesta}<>"",'
-        f'{fascia_chiesta}<>{fascia_riga}),"fascia",""))))))')
+        f'{fascia_chiesta}<>{fascia_riga}),"fascia","")))))))')
 
 
 def scrivi_desiderata(wb, persone, mese, anno, festivita):
