@@ -147,6 +147,10 @@ REGOLE_PER_PERSONA = 10
 
 # Righe libere lasciate pronte nella tabella dei tetti mensili.
 RIGHE_TETTI_LIBERE = 20
+
+# Fin dove arriva un elenco che alimenta una tendina. Serve un limite:
+# un riferimento a colonna intera rallenta il foglio in modo grave.
+RIGHE_MASSIME_ELENCO = 500
 MODI_REGOLA = 'mai,solo,evita,preferisci'
 SI_NO = 'SI,NO'
 
@@ -521,8 +525,11 @@ def _intervallo_dinamico(foglio):
 
     Si potrebbe scrivere `T_Tabella[colonna]`, che e' piu' leggibile, ma
     non tutte le versioni di Excel accettano un riferimento strutturato
-    come sorgente di una validazione. OFFSET con COUNTA le accontenta
-    tutte.
+    come sorgente di una validazione.
+
+    La forma con INDEX non e' volatile, a differenza di OFFSET: con le
+    tendine appese a millecinquecento celle, un nome volatile fa
+    ricalcolare il foglio a ogni battuta e lo rende inusabile.
 
     Args:
         foglio (str): nome del foglio.
@@ -530,8 +537,8 @@ def _intervallo_dinamico(foglio):
     Returns:
         str: la formula del nome definito.
     """
-    return (f"OFFSET({foglio}!$A$2,0,0,"
-            f"COUNTA({foglio}!$A:$A)-1,1)")
+    return (f"{foglio}!$A$2:INDEX({foglio}!$A$2:$A${RIGHE_MASSIME_ELENCO},"
+            f"MAX(1,COUNTA({foglio}!$A$2:$A${RIGHE_MASSIME_ELENCO})))")
 
 
 def registra_nome(wb, nome, riferimento):
@@ -813,8 +820,8 @@ def main():
     scrivi_parametri(wb, mese, anno)
 
     festivita = calcola_festivita(anno)
-    _, celle_aperte = scrivi_calendario(wb, turni, mese, anno,
-                                        festivita, len(persone))
+    _, celle_aperte = scrivi_calendario(wb, turni, mese, anno, festivita,
+                                        len(persone), len(richieste))
     scrivi_desiderata(wb, persone, mese, anno, festivita)
 
     for nome, foglio in (('elenco_bersagli', 'Bersagli'),
@@ -1111,7 +1118,8 @@ def _tipologia_per_sede():
     return {sede[0]: sede[3] for sede in SEDI}
 
 
-def scrivi_calendario(wb, turni, mese, anno, festivita, numero_persone):
+def scrivi_calendario(wb, turni, mese, anno, festivita, numero_persone,
+                      numero_richieste):
     """
     La griglia dei turni, nella veste del modello originale.
 
@@ -1128,6 +1136,7 @@ def scrivi_calendario(wb, turni, mese, anno, festivita, numero_persone):
         mese (int), anno (int): il mese da programmare.
         festivita (dict): le date festive dell'anno.
         numero_persone (int): quante righe ha il foglio Desiderata.
+        numero_richieste (int): quante righe ha T_Richieste.
 
     Returns:
         tuple: (foglio, numero di celle da coprire).
@@ -1171,13 +1180,15 @@ def scrivi_calendario(wb, turni, mese, anno, festivita, numero_persone):
     for colonna in (COLONNA_FASCIA_RIGA, COLONNA_ID_RIGA):
         ws.column_dimensions[get_column_letter(colonna)].hidden = True
 
-    _applica_segnalazioni(ws, ultima_riga, ultimo_giorno, numero_persone)
+    _applica_segnalazioni(ws, ultima_riga, ultimo_giorno,
+                          numero_persone, numero_richieste)
     _scrivi_legenda(ws, ultima_riga + 2)
 
     return ws, aperte
 
 
-def _applica_segnalazioni(ws, ultima_riga, ultimo_giorno, numero_persone):
+def _applica_segnalazioni(ws, ultima_riga, ultimo_giorno,
+                          numero_persone, numero_richieste):
     """
     Attacca alla griglia le regole che colorano gli errori.
 
@@ -1186,12 +1197,13 @@ def _applica_segnalazioni(ws, ultima_riga, ultimo_giorno, numero_persone):
         ultima_riga (int): ultima riga della griglia.
         ultimo_giorno (str): lettera dell'ultima colonna dei giorni.
         numero_persone (int): quante righe ha il foglio Desiderata.
+        numero_richieste (int): quante righe ha la tabella delle richieste.
     """
     richiesta = _richiesta_del_giorno(
         PRIMA_RIGA_DATI, PRIMA_RIGA_DATI - 1 + numero_persone, ultimo_giorno)
 
-    for prima_cella, formula, stile, _ in _regole_segnalazione(ultima_riga,
-                                                               richiesta):
+    for prima_cella, formula, stile, _ in _regole_segnalazione(
+            ultima_riga, richiesta, numero_richieste + 1):
         colonna = prima_cella[0]
         intervallo = (f'{colonna}{PRIMA_RIGA_DATI}:'
                       f'{ultimo_giorno}{ultima_riga}')
@@ -1309,7 +1321,7 @@ def _richiesta_del_giorno(riga_desiderata, ultima_persona, ultimo_giorno):
             f'$B${ultima_persona},0),COLUMN()-2),"")')
 
 
-def _regole_segnalazione(ultima_riga, richiesta):
+def _regole_segnalazione(ultima_riga, richiesta, ultima_richiesta):
     """
     Le regole che colorano gli errori, in ordine di gravita'.
 
@@ -1318,24 +1330,40 @@ def _regole_segnalazione(ultima_riga, richiesta):
     dipendano dalla posizione delle righe: dove sta la notte lo dice la
     colonna di servizio, non il numero di riga.
 
+    Ogni intervallo e' delimitato. Un riferimento a colonna intera qui si
+    paga caro: la formula gira su millecinquecento celle, e scandire un
+    milione di righe per ognuna rende il foglio inusabile.
+
     Args:
         ultima_riga (int): ultima riga della griglia.
         richiesta (str): formula che ricava il desiderata del giorno.
+        ultima_richiesta (int): ultima riga della tabella dei tipi di
+            richiesta.
 
     Returns:
-        list: tuple (intervallo, formula, stile, descrizione).
+        list: tuple (prima cella, formula, stile, descrizione).
     """
+    sigle = f'Richieste!$A$2:$A${ultima_richiesta}'
+    tipi = f'Richieste!$B$2:$B${ultima_richiesta}'
+    fasce_richieste = f'Richieste!$C$2:$C${ultima_richiesta}'
+
     fasce = (f'${get_column_letter(COLONNA_FASCIA_RIGA)}$'
              f'{PRIMA_RIGA_DATI}:${get_column_letter(COLONNA_FASCIA_RIGA)}$'
              f'{ultima_riga}')
     fascia_riga = (f'${get_column_letter(COLONNA_FASCIA_RIGA)}'
                    f'{PRIMA_RIGA_DATI}')
     colonna = f'C${PRIMA_RIGA_DATI}:C${ultima_riga}'
-    # Ancorata alla colonna D, quindi il giorno prima e' C: Excel
-    # trasla il riferimento insieme alla cella che valuta.
+    # Ancorata alla colonna D, quindi il giorno prima e' C: Excel trasla
+    # il riferimento insieme alla cella che valuta.
     precedente = f'C${PRIMA_RIGA_DATI}:C${ultima_riga}'
     cella = f'C{PRIMA_RIGA_DATI}'
     grave = _stile_segnalazione(COLORE_GRAVE_SFONDO, COLORE_GRAVE_TESTO)
+
+    # Il tipo e la fascia della richiesta si prendono con una ricerca
+    # sola, invece di due conteggi: e' la stessa risposta a meta' costo.
+    tipo_chiesto = f'IFERROR(INDEX({tipi},MATCH({richiesta},{sigle},0)),"")'
+    fascia_chiesta = (f'IFERROR(INDEX({fasce_richieste},'
+                      f'MATCH({richiesta},{sigle},0)),"")')
 
     return [
         (f'C{PRIMA_RIGA_DATI}',
@@ -1354,17 +1382,13 @@ def _regole_segnalazione(ultima_riga, richiesta):
          grave, 'Smonto notte: ha lavorato la notte prima'),
 
         (f'C{PRIMA_RIGA_DATI}',
-         f'AND({cella}<>"",'
-         f'COUNTIFS(Richieste!$A:$A,{richiesta},'
-         f'Richieste!$B:$B,"assenza")>0)',
+         f'AND({cella}<>"",{tipo_chiesto}="assenza")',
          _stile_segnalazione(COLORE_ASSENZA_SFONDO, COLORE_ASSENZA_TESTO),
          'Assegnato in un giorno di assenza richiesta'),
 
         (f'C{PRIMA_RIGA_DATI}',
-         f'AND({cella}<>"",{fascia_riga}<>"",'
-         f'COUNTIFS(Richieste!$A:$A,{richiesta},Richieste!$C:$C,"<>")>0,'
-         f'COUNTIFS(Richieste!$A:$A,{richiesta},'
-         f'Richieste!$C:$C,{fascia_riga})=0)',
+         f'AND({cella}<>"",{fascia_riga}<>"",{fascia_chiesta}<>"",'
+         f'{fascia_chiesta}<>{fascia_riga})',
          _stile_segnalazione(COLORE_FASCIA_SFONDO, COLORE_FASCIA_TESTO),
          'Fascia diversa da quella richiesta'),
     ]
